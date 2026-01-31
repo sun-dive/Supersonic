@@ -50,6 +50,7 @@ function init() {
   // Display wallet info
   setText('address', provider.getAddress())
   setText('pubkey', provider.getPublicKeyHex())
+  setText('privkey', key.toWif())
 
   // Bind buttons
   on('btn-refresh', refreshBalance)
@@ -97,7 +98,7 @@ async function refreshTokenList() {
       <div class="token-actions">
         <button onclick="window._selectForTransfer('${t.tokenId}')">Select for Transfer</button>
         <button onclick="window._verifyToken('${t.tokenId}')">Verify</button>
-        <a href="https://test.whatsonchain.com/tx/${t.currentTxId}" target="_blank" rel="noopener">View on WoC</a>
+        <a href="https://testnet.bitcoincloud.net/tx/${t.currentTxId}" target="_blank" rel="noopener">View on WoC</a>
       </div>
     </div>
   `).join('')
@@ -124,7 +125,7 @@ async function handleMint() {
       'Genesis broadcast!',
       `TXID: ${result.txId}`,
       `Token ID: ${result.tokenId}`,
-      `View: https://test.whatsonchain.com/tx/${result.txId}`,
+      `View: https://testnet.bitcoincloud.net/tx/${result.txId}`,
       '',
       'Polling for Merkle proof (may take ~10 min)...',
     ].join('\n'))
@@ -165,7 +166,7 @@ async function handleTransfer() {
     setResult('transfer-result', [
       'Transfer broadcast!',
       `TXID: ${result.txId}`,
-      `View: https://test.whatsonchain.com/tx/${result.txId}`,
+      `View: https://testnet.bitcoincloud.net/tx/${result.txId}`,
       '',
       'Send this bundle to the recipient:',
       result.bundleJson,

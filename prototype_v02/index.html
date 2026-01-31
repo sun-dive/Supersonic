@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MPT Prototype Wallet v02 (BSV Testnet)</title>
+  <title>MPT Prototype Wallet v02 (BSV Mainnet)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -86,8 +86,8 @@
 </head>
 <body>
 
-  <h1>MPT Prototype Wallet v02 <small>BSV Testnet</small></h1>
-  <p class="muted" style="margin-bottom:16px;">Merkle Proof Token -- P2PKH + OP_RETURN prototype. v02: safe transfer with bundle persistence.</p>
+  <h1>MPT Prototype Wallet v02 <small>BSV Mainnet</small></h1>
+  <p class="muted" style="margin-bottom:16px;">Merkle Proof Token -- P2PKH + OP_RETURN prototype. v02: safe transfer with bundle persistence. MAINNET -- real BSV.</p>
 
   <!-- Wallet Info -->
   <section id="wallet-info">
@@ -98,9 +98,15 @@
     <div class="field"><span class="label">Balance:</span> <span id="balance">...</span></div>
     <div class="row" style="margin-top:10px;">
       <button id="btn-refresh">Refresh Balance</button>
-      <a href="https://faucet.bitcoincloud.net/" target="_blank" rel="noopener">Get Testnet Coins</a>
+      <a href="https://whatsonchain.com/" target="_blank" rel="noopener">WhatsOnChain Explorer</a>
       <span style="flex:1"></span>
       <button id="btn-new-wallet" class="btn-danger">New Wallet</button>
+    </div>
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid #21262d;">
+      <div class="row">
+        <input id="import-wif" placeholder="Paste WIF private key to restore wallet" style="flex:1;" />
+        <button id="btn-restore-wallet">Restore Wallet</button>
+      </div>
     </div>
   </section>
 
@@ -109,6 +115,7 @@
     <h2>Mint Token</h2>
     <input id="token-name" placeholder="Token name (e.g. My First MPT)" />
     <input id="token-attrs" placeholder="Attributes hex (optional, e.g. 01 for #1)" />
+    <input id="fee-rate" type="number" placeholder="Fee rate (sats/KB)" value="150" min="1" style="width:200px;" />
     <button id="btn-mint">Mint NFT</button>
     <pre id="mint-result"></pre>
   </section>

@@ -9,7 +9,7 @@
  * - Bundle JSON is persisted in storage for recovery
  * - Explicit confirm/cancel for completing transfers
  */
-import { Transaction, P2PKH, PublicKey, SatoshisPerKilobyte } from '@bsv/sdk'
+import { Transaction, P2PKH, PublicKey } from '@bsv/sdk'
 import { WocProvider, Utxo } from './wocProvider'
 import { encodeOpReturn, TokenOpReturnData, encodeTokenRules } from './opReturnCodec'
 import {
@@ -37,6 +37,8 @@ export interface OwnedToken {
   stateData: string
   satoshis: number
   status: TokenStatus
+  createdAt?: string           // ISO timestamp of genesis/transfer
+  feePaid?: number             // fee in satoshis for the creating TX
   transferTxId?: string        // set when pending_transfer
   transferBundleJson?: string  // saved bundle for recovery
 }
@@ -135,6 +137,22 @@ export class TokenStore {
     }
     return tokens
   }
+
+  /**
+   * Find a token by token ID, genesis TXID, or current TXID.
+   * Falls back to scanning all tokens if direct lookup fails.
+   */
+  async findToken(idOrTxId: string): Promise<OwnedToken | null> {
+    // Try direct token ID lookup first
+    const direct = await this.getToken(idOrTxId)
+    if (direct) return direct
+
+    // Fall back to scanning by TXID fields
+    const all = await this.listTokens()
+    return all.find(t =>
+      t.genesisTxId === idOrTxId || t.currentTxId === idOrTxId
+    ) ?? null
+  }
 }
 
 // ─── Token Builder ──────────────────────────────────────────────────
@@ -142,6 +160,8 @@ export class TokenStore {
 const TOKEN_SATS = 1
 
 export class P2pkhTokenBuilder {
+  feePerKb = DEFAULT_FEE_PER_KB
+
   constructor(
     private provider: WocProvider,
     private store: TokenStore
@@ -161,36 +181,15 @@ export class P2pkhTokenBuilder {
     const address = this.provider.getAddress()
     const pubKeyHex = this.provider.getPublicKeyHex()
 
-    // 1. Find a funding UTXO
+    // 1. Find funding UTXOs
     const utxos = await this.provider.getUtxos()
     if (utxos.length === 0) {
-      throw new Error('No UTXOs. Fund your testnet address first.')
+      throw new Error('No UTXOs. Fund your wallet address first.')
     }
-    const funding = pickLargestUtxo(utxos)
 
-    // 2. Fetch the full source transaction (required by @bsv/sdk for signing)
-    const sourceTx = await this.provider.getSourceTransaction(funding.txId)
-
-    // 3. Build the genesis transaction
+    // 2. Build token metadata
     const tokenRulesHex = encodeTokenRules(1, 0, 0, 1) // supply=1, NFT, unrestricted, v1
     const attrsHex = params.attributes ?? '00'
-
-    const tx = new Transaction()
-
-    // Input: funding
-    tx.addInput({
-      sourceTransaction: sourceTx,
-      sourceOutputIndex: funding.outputIndex,
-      unlockingScriptTemplate: new P2PKH().unlock(key),
-    })
-
-    // Output 0: token P2PKH (1 sat)
-    tx.addOutput({
-      lockingScript: new P2PKH().lock(address),
-      satoshis: TOKEN_SATS,
-    })
-
-    // Output 1: OP_RETURN with token metadata (0 sats)
     const opReturnData: TokenOpReturnData = {
       tokenName: params.tokenName,
       tokenRules: tokenRulesHex,
@@ -198,28 +197,24 @@ export class P2pkhTokenBuilder {
       ownerPubKey: pubKeyHex,
       stateData: '',
     }
-    tx.addOutput({
-      lockingScript: encodeOpReturn(opReturnData),
-      satoshis: 0,
-    })
 
-    // Output 2: change
-    tx.addOutput({
-      lockingScript: new P2PKH().lock(address),
-      change: true,
-    })
-
-    // 4. Fee calculation and signing
-    await tx.fee(new SatoshisPerKilobyte(1))
-    await tx.sign()
-
-    // 5. Broadcast
-    const rawHex = tx.toHex()
-    const txId = tx.id('hex') as string
+    // 3. Try UTXO combinations (single, then multi) to cover fees
+    const { tx, rawHex, txId, fee } = await this.buildFundedTx(
+      utxos, key, address, (t) => {
+        t.addOutput({
+          lockingScript: new P2PKH().lock(address),
+          satoshis: TOKEN_SATS,
+        })
+        t.addOutput({
+          lockingScript: encodeOpReturn(opReturnData),
+          satoshis: 0,
+        })
+      },
+    )
 
     await this.provider.broadcast(rawHex)
 
-    // 6. Compute Token ID and store
+    // 4. Compute Token ID and store
     const tokenId = computeTokenId(txId, 0)
 
     const ownedToken: OwnedToken = {
@@ -235,9 +230,10 @@ export class P2pkhTokenBuilder {
       stateData: '',
       satoshis: TOKEN_SATS,
       status: 'active',
+      createdAt: new Date().toISOString(),
+      feePaid: fee,
     }
 
-    // Store with empty proof chain (populated after mining)
     const emptyChain: ProofChain = { genesisTxId: txId, entries: [] }
     await this.store.addToken(ownedToken, emptyChain)
 
@@ -261,8 +257,8 @@ export class P2pkhTokenBuilder {
     const key = this.provider.getPrivateKey()
     const myAddress = this.provider.getAddress()
 
-    // 1. Load token
-    const token = await this.store.getToken(tokenId)
+    // 1. Load token (try token ID first, then fall back to TXID match)
+    const token = await this.store.findToken(tokenId)
     if (!token) throw new Error(`Token not found: ${tokenId}`)
     if (token.status === 'pending_transfer') {
       throw new Error(`Token already has a pending transfer (TXID: ${token.transferTxId}). Confirm or cancel it first.`)
@@ -271,83 +267,57 @@ export class P2pkhTokenBuilder {
       throw new Error('Token has already been transferred.')
     }
 
-    const proofChain = await this.store.getProofChain(tokenId)
+    // Use the actual token ID for proof chain lookup
+    const actualTokenId = token.tokenId
+    const proofChain = await this.store.getProofChain(actualTokenId)
 
-    // 2. Fetch source transactions
+    // 2. Fetch token source TX and funding candidates
     const tokenSourceTx = await this.provider.getSourceTransaction(token.currentTxId)
 
     const utxos = await this.provider.getUtxos()
-    // Filter out the token UTXO from funding candidates
     const fundingCandidates = utxos.filter(
       u => !(u.txId === token.currentTxId && u.outputIndex === token.currentOutputIndex)
     )
     if (fundingCandidates.length === 0) {
       throw new Error('No funding UTXOs available (separate from token UTXO)')
     }
-    const funding = pickLargestUtxo(fundingCandidates)
-    const fundingSourceTx = await this.provider.getSourceTransaction(funding.txId)
 
     // 3. Derive recipient address
     const recipientPubKey = PublicKey.fromString(recipientPubKeyHex)
-    const recipientAddress = recipientPubKey.toAddress('testnet')
+    const recipientAddress = recipientPubKey.toAddress()
 
-    // 4. Build transaction
-    const tx = new Transaction()
+    // 4. Build TX with multi-UTXO funding (tries 1, then 2, then 3 UTXOs)
+    const { rawHex, txId, fee } = await this.buildFundedTransferTx(
+      tokenSourceTx, token.currentOutputIndex,
+      fundingCandidates, key, myAddress, (tx) => {
+        tx.addOutput({
+          lockingScript: new P2PKH().lock(recipientAddress),
+          satoshis: TOKEN_SATS,
+        })
+        tx.addOutput({
+          lockingScript: encodeOpReturn({
+            tokenName: token.tokenName,
+            tokenRules: token.tokenRules,
+            tokenAttributes: token.tokenAttributes,
+            ownerPubKey: recipientPubKeyHex,
+            stateData: token.stateData,
+          }),
+          satoshis: 0,
+        })
+      },
+    )
 
-    // Input 0: token UTXO
-    tx.addInput({
-      sourceTransaction: tokenSourceTx,
-      sourceOutputIndex: token.currentOutputIndex,
-      unlockingScriptTemplate: new P2PKH().unlock(key),
-    })
-
-    // Input 1: funding UTXO
-    tx.addInput({
-      sourceTransaction: fundingSourceTx,
-      sourceOutputIndex: funding.outputIndex,
-      unlockingScriptTemplate: new P2PKH().unlock(key),
-    })
-
-    // Output 0: P2PKH to new owner (1 sat)
-    tx.addOutput({
-      lockingScript: new P2PKH().lock(recipientAddress),
-      satoshis: TOKEN_SATS,
-    })
-
-    // Output 1: OP_RETURN with updated owner
-    tx.addOutput({
-      lockingScript: encodeOpReturn({
-        tokenName: token.tokenName,
-        tokenRules: token.tokenRules,
-        tokenAttributes: token.tokenAttributes,
-        ownerPubKey: recipientPubKeyHex,
-        stateData: token.stateData,
-      }),
-      satoshis: 0,
-    })
-
-    // Output 2: change to sender
-    tx.addOutput({
-      lockingScript: new P2PKH().lock(myAddress),
-      change: true,
-    })
-
-    // 5. Fee, sign, broadcast
-    await tx.fee(new SatoshisPerKilobyte(1))
-    await tx.sign()
-
-    const rawHex = tx.toHex()
-    const txId = tx.id('hex') as string
     await this.provider.broadcast(rawHex)
 
-    // 6. Build bundle for recipient
-    // The bundle token is a clean copy for the recipient (status: active, no transfer fields)
+    // Build bundle for recipient
     const recipientToken: OwnedToken = {
       ...token,
       currentTxId: txId,
       currentOutputIndex: 0,
       ownerPubKey: recipientPubKeyHex,
       status: 'active',
+      createdAt: new Date().toISOString(),
+      feePaid: fee,
       transferTxId: undefined,
       transferBundleJson: undefined,
     }
@@ -357,13 +327,13 @@ export class P2pkhTokenBuilder {
     }
     const bundleJson = JSON.stringify(bundle, null, 2)
 
-    // 7. Mark as pending_transfer (NOT deleted) with bundle saved
+    // Mark as pending_transfer with bundle saved
     token.status = 'pending_transfer'
     token.transferTxId = txId
     token.transferBundleJson = bundleJson
     await this.store.updateToken(token)
 
-    return { txId, tokenId, bundleJson }
+    return { txId, tokenId: actualTokenId, bundleJson }
   }
 
   /**
@@ -455,6 +425,180 @@ export class P2pkhTokenBuilder {
   }
 
   /**
+   * Build a funded transaction, trying single UTXOs first, then combining
+   * 2 or 3 UTXOs. Only throws if total wallet balance is insufficient.
+   */
+  private async buildFundedTx(
+    utxos: Utxo[],
+    key: ReturnType<WocProvider['getPrivateKey']>,
+    changeAddress: string,
+    addOutputs: (tx: Transaction) => void,
+  ): Promise<{ tx: Transaction; rawHex: string; txId: string; fee: number }> {
+    const sorted = [...utxos].sort((a, b) => a.satoshis - b.satoshis)
+
+    // Generate UTXO combinations: singles first, then pairs, then triples
+    const combos: Utxo[][] = []
+    for (const u of sorted) combos.push([u])
+    if (sorted.length >= 2) {
+      for (let i = 0; i < sorted.length; i++)
+        for (let j = i + 1; j < sorted.length; j++)
+          combos.push([sorted[i], sorted[j]])
+    }
+    if (sorted.length >= 3) {
+      for (let i = 0; i < sorted.length; i++)
+        for (let j = i + 1; j < sorted.length; j++)
+          for (let k = j + 1; k < sorted.length; k++)
+            combos.push([sorted[i], sorted[j], sorted[k]])
+    }
+
+    // Sort combos by total sats ascending so we try cheapest first
+    combos.sort((a, b) =>
+      a.reduce((s, u) => s + u.satoshis, 0) - b.reduce((s, u) => s + u.satoshis, 0)
+    )
+
+    let lastError = ''
+    for (const combo of combos) {
+      const tx = new Transaction()
+
+      // Add funding inputs
+      for (const u of combo) {
+        const sourceTx = await this.provider.getSourceTransaction(u.txId)
+        tx.addInput({
+          sourceTransaction: sourceTx,
+          sourceOutputIndex: u.outputIndex,
+          unlockingScriptTemplate: new P2PKH().unlock(key),
+        })
+      }
+
+      // Add protocol outputs
+      addOutputs(tx)
+
+      // Compute fee manually from estimated TX size
+      const fee = estimateFee(combo.length, tx.outputs.length + 1, tx.outputs, this.feePerKb)
+      const totalIn = combo.reduce((s, u) => s + u.satoshis, 0)
+      const protocolOut = tx.outputs.reduce((s, o) => s + (o.satoshis ?? 0), 0)
+      const changeAmount = totalIn - protocolOut - fee
+
+      if (changeAmount < 0) {
+        lastError = `${combo.length} UTXO(s) totalling ${totalIn} sats too small for fees (need ${fee} sats)`
+        continue
+      }
+
+      // Add change output with explicit satoshis
+      tx.addOutput({
+        lockingScript: new P2PKH().lock(changeAddress),
+        satoshis: changeAmount,
+      })
+
+      await tx.sign()
+
+      return {
+        tx,
+        rawHex: tx.toHex(),
+        txId: tx.id('hex') as string,
+        fee,
+      }
+    }
+
+    const totalBalance = utxos.reduce((s, u) => s + u.satoshis, 0)
+    throw new Error(
+      `Insufficient balance (${totalBalance} sats) to cover transaction fees. ${lastError}`
+    )
+  }
+
+  /**
+   * Build a funded transfer transaction. The token UTXO is always input 0;
+   * funding UTXOs are added after it, trying single then multi-UTXO combos.
+   */
+  private async buildFundedTransferTx(
+    tokenSourceTx: Transaction,
+    tokenOutputIndex: number,
+    fundingUtxos: Utxo[],
+    key: ReturnType<WocProvider['getPrivateKey']>,
+    changeAddress: string,
+    addOutputs: (tx: Transaction) => void,
+  ): Promise<{ tx: Transaction; rawHex: string; txId: string; fee: number }> {
+    const sorted = [...fundingUtxos].sort((a, b) => a.satoshis - b.satoshis)
+
+    // Generate funding UTXO combinations: singles, pairs, triples
+    const combos: Utxo[][] = []
+    for (const u of sorted) combos.push([u])
+    if (sorted.length >= 2) {
+      for (let i = 0; i < sorted.length; i++)
+        for (let j = i + 1; j < sorted.length; j++)
+          combos.push([sorted[i], sorted[j]])
+    }
+    if (sorted.length >= 3) {
+      for (let i = 0; i < sorted.length; i++)
+        for (let j = i + 1; j < sorted.length; j++)
+          for (let k = j + 1; k < sorted.length; k++)
+            combos.push([sorted[i], sorted[j], sorted[k]])
+    }
+
+    combos.sort((a, b) =>
+      a.reduce((s, u) => s + u.satoshis, 0) - b.reduce((s, u) => s + u.satoshis, 0)
+    )
+
+    let lastError = ''
+    for (const combo of combos) {
+      const tx = new Transaction()
+
+      // Input 0: token UTXO
+      tx.addInput({
+        sourceTransaction: tokenSourceTx,
+        sourceOutputIndex: tokenOutputIndex,
+        unlockingScriptTemplate: new P2PKH().unlock(key),
+      })
+
+      // Inputs 1+: funding UTXOs
+      for (const u of combo) {
+        const sourceTx = await this.provider.getSourceTransaction(u.txId)
+        tx.addInput({
+          sourceTransaction: sourceTx,
+          sourceOutputIndex: u.outputIndex,
+          unlockingScriptTemplate: new P2PKH().unlock(key),
+        })
+      }
+
+      // Protocol outputs
+      addOutputs(tx)
+
+      // Compute fee manually (token input + funding inputs)
+      const numInputs = 1 + combo.length
+      const fee = estimateFee(numInputs, tx.outputs.length + 1, tx.outputs, this.feePerKb)
+      const totalIn = TOKEN_SATS + combo.reduce((s, u) => s + u.satoshis, 0)
+      const protocolOut = tx.outputs.reduce((s, o) => s + (o.satoshis ?? 0), 0)
+      const changeAmount = totalIn - protocolOut - fee
+
+      if (changeAmount < 0) {
+        const fundingSats = combo.reduce((s, u) => s + u.satoshis, 0)
+        lastError = `${combo.length} funding UTXO(s) totalling ${fundingSats} sats too small for fees (need ${fee} sats)`
+        continue
+      }
+
+      // Add change output with explicit satoshis
+      tx.addOutput({
+        lockingScript: new P2PKH().lock(changeAddress),
+        satoshis: changeAmount,
+      })
+
+      await tx.sign()
+
+      return {
+        tx,
+        rawHex: tx.toHex(),
+        txId: tx.id('hex') as string,
+        fee,
+      }
+    }
+
+    const totalFunding = fundingUtxos.reduce((s, u) => s + u.satoshis, 0)
+    throw new Error(
+      `Insufficient funding balance (${totalFunding} sats) to cover transfer fees. ${lastError}`
+    )
+  }
+
+  /**
    * Verify a token's proof chain against block headers.
    */
   async verifyToken(tokenId: string): Promise<{ valid: boolean; reason: string }> {
@@ -488,6 +632,36 @@ export class P2pkhTokenBuilder {
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-function pickLargestUtxo(utxos: Utxo[]): Utxo {
-  return [...utxos].sort((a, b) => b.satoshis - a.satoshis)[0]
+/** Default fee rate in satoshis per kilobyte. */
+const DEFAULT_FEE_PER_KB = 150
+
+/** Estimated bytes per P2PKH input (with signature). */
+const BYTES_PER_INPUT = 148
+/** Bytes per P2PKH output (value + script). */
+const BYTES_PER_P2PKH_OUTPUT = 34
+/** Base transaction overhead (version + locktime + varint). */
+const TX_OVERHEAD = 10
+
+/**
+ * Estimate the transaction fee from input/output counts and actual output scripts.
+ * Uses actual script lengths for non-change outputs and standard P2PKH size for the change output.
+ */
+function estimateFee(
+  numInputs: number,
+  numOutputs: number,
+  existingOutputs: { lockingScript?: { toBinary(): number[] }; satoshis?: number }[],
+  feePerKb: number,
+): number {
+  let size = TX_OVERHEAD + numInputs * BYTES_PER_INPUT
+
+  // Use actual script lengths for existing outputs
+  for (const o of existingOutputs) {
+    const scriptLen = o.lockingScript?.toBinary()?.length ?? 25
+    size += 8 + 1 + scriptLen // 8 bytes value + 1 byte varint + script
+  }
+
+  // Add standard P2PKH size for the change output
+  size += BYTES_PER_P2PKH_OUTPUT
+
+  return Math.ceil(size * feePerKb / 1000)
 }

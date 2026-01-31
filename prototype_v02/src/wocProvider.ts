@@ -1,5 +1,5 @@
 /**
- * WhatsOnChain-based wallet provider for BSV testnet.
+ * WhatsOnChain-based wallet provider for BSV mainnet.
  *
  * Implements the minimal operations needed by the MPT prototype:
  * UTXO lookup, broadcasting, block headers, Merkle proofs, raw TXs.
@@ -9,7 +9,7 @@
 import { PrivateKey, PublicKey, Transaction } from '@bsv/sdk'
 import type { MerkleProofEntry, MerklePathNode } from './cryptoCompat'
 
-const WOC_BASE = 'https://api.whatsonchain.com/v1/bsv/test'
+const WOC_BASE = 'https://api.whatsonchain.com/v1/bsv/main'
 
 export interface Utxo {
   txId: string
@@ -42,7 +42,7 @@ export class WocProvider {
   }
 
   getAddress(): string {
-    return this.key.toAddress('testnet')
+    return this.key.toAddress()
   }
 
   // ── UTXOs ───────────────────────────────────────────────────────

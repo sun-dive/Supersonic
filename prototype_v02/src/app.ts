@@ -62,6 +62,7 @@ function init() {
   on('btn-import', handleImport)
   on('btn-verify', handleVerify)
   on('btn-new-wallet', handleNewWallet)
+  on('btn-restore-wallet', handleRestoreWallet)
 
   // Initial refresh
   refreshBalance()
@@ -81,7 +82,11 @@ async function refreshBalance() {
 }
 
 async function refreshTokenList() {
-  const tokens = await store.listTokens()
+  const tokens = (await store.listTokens()).sort((a, b) => {
+    const da = a.createdAt ? new Date(a.createdAt).getTime() : 0
+    const db = b.createdAt ? new Date(b.createdAt).getTime() : 0
+    return db - da // newest first
+  })
   const container = el('token-list')
   if (!container) return
 
@@ -101,6 +106,8 @@ async function refreshTokenList() {
       <div class="token-field"><span class="label">Output:</span> ${t.currentOutputIndex}</div>
       <div class="token-field"><span class="label">Owner:</span> <code class="selectable">${t.ownerPubKey.slice(0, 16)}...</code></div>
       <div class="token-field"><span class="label">Sats:</span> ${t.satoshis}</div>
+      ${t.createdAt ? `<div class="token-field"><span class="label">Created:</span> ${formatDate(t.createdAt)}</div>` : ''}
+      ${t.feePaid !== undefined ? `<div class="token-field"><span class="label">Fee:</span> ${t.feePaid} sats</div>` : ''}
       ${t.transferTxId ? `<div class="token-field"><span class="label">Transfer TXID:</span> <code class="selectable">${t.transferTxId}</code></div>` : ''}
       <div class="token-actions">${actions}</div>
     </div>
@@ -130,10 +137,10 @@ function renderTokenActions(t: OwnedToken): string {
   }
 
   if (t.currentTxId) {
-    parts.push(`<a href="https://testnet.bitcoincloud.net/tx/${t.currentTxId}" target="_blank" rel="noopener">View TX</a>`)
+    parts.push(`<a href="https://whatsonchain.com/tx/${t.currentTxId}" target="_blank" rel="noopener">View TX</a>`)
   }
   if (t.transferTxId && t.transferTxId !== t.currentTxId) {
-    parts.push(`<a href="https://testnet.bitcoincloud.net/tx/${t.transferTxId}" target="_blank" rel="noopener">View Transfer TX</a>`)
+    parts.push(`<a href="https://whatsonchain.com/tx/${t.transferTxId}" target="_blank" rel="noopener">View Transfer TX</a>`)
   }
 
   return parts.join('\n')
@@ -148,6 +155,9 @@ async function handleMint() {
     return
   }
 
+  const feeRate = parseInt(inputVal('fee-rate'), 10)
+  if (feeRate > 0) builder.feePerKb = feeRate
+
   setResult('mint-result', 'Building genesis transaction...')
 
   try {
@@ -160,7 +170,7 @@ async function handleMint() {
       'Genesis broadcast!',
       `TXID: ${result.txId}`,
       `Token ID: ${result.tokenId}`,
-      `View: https://testnet.bitcoincloud.net/tx/${result.txId}`,
+      `View: https://whatsonchain.com/tx/${result.txId}`,
       '',
       'Polling for Merkle proof (may take ~10 min)...',
     ].join('\n'))
@@ -193,6 +203,9 @@ async function handleTransfer() {
     return
   }
 
+  const feeRate = parseInt(inputVal('fee-rate'), 10)
+  if (feeRate > 0) builder.feePerKb = feeRate
+
   setResult('transfer-result', 'Building transfer transaction...')
 
   try {
@@ -201,7 +214,7 @@ async function handleTransfer() {
     setResult('transfer-result', [
       'Transfer broadcast!',
       `TXID: ${result.txId}`,
-      `View: https://testnet.bitcoincloud.net/tx/${result.txId}`,
+      `View: https://whatsonchain.com/tx/${result.txId}`,
       '',
       'IMPORTANT: Copy the bundle below and send it to the recipient.',
       'The bundle is also saved -- click "Copy Bundle" on the token card.',
@@ -264,6 +277,28 @@ async function handleVerify() {
 function handleNewWallet() {
   if (!confirm('This will generate a new key and clear all tokens. Continue?')) return
   localStorage.clear()
+  location.reload()
+}
+
+function handleRestoreWallet() {
+  const wif = inputVal('import-wif')
+  if (!wif) {
+    alert('Paste a WIF private key first.')
+    return
+  }
+
+  try {
+    // Validate the WIF by parsing it
+    const testKey = PrivateKey.fromWif(wif)
+    testKey.toPublicKey() // ensure it's valid
+  } catch {
+    alert('Invalid WIF private key.')
+    return
+  }
+
+  if (!confirm('This will replace the current wallet key and reload the page. Token data in storage will be preserved. Continue?')) return
+
+  localStorage.setItem(WIF_KEY, wif)
   location.reload()
 }
 
@@ -339,6 +374,15 @@ function on(id: string, handler: () => void) {
 
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleString()
+  } catch {
+    return iso
+  }
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────
