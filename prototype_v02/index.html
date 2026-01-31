@@ -110,6 +110,15 @@
     </div>
   </section>
 
+  <!-- Send BSV -->
+  <section>
+    <h2>Send BSV</h2>
+    <input id="send-address" placeholder="Recipient BSV address (e.g. 1A1zP1...)" />
+    <input id="send-amount" type="number" placeholder="Amount in satoshis" min="1" style="width:200px;" />
+    <button id="btn-send">Send</button>
+    <pre id="send-result"></pre>
+  </section>
+
   <!-- Mint Token -->
   <section>
     <h2>Mint Token</h2>
@@ -123,6 +132,10 @@
   <!-- My Tokens -->
   <section>
     <h2>My Tokens</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <button id="btn-check-incoming">Check Incoming Tokens</button>
+      <span id="incoming-status" class="muted"></span>
+    </div>
     <div id="token-list"><p class="muted">No tokens yet. Mint one above.</p></div>
   </section>
 
@@ -133,14 +146,6 @@
     <input id="transfer-recipient" placeholder="Recipient public key (66-char hex)" />
     <button id="btn-transfer">Transfer</button>
     <pre id="transfer-result"></pre>
-  </section>
-
-  <!-- Import Token Bundle -->
-  <section>
-    <h2>Import Token Bundle</h2>
-    <textarea id="import-bundle" rows="6" placeholder="Paste the token bundle JSON received from sender"></textarea>
-    <button id="btn-import">Import</button>
-    <pre id="import-result"></pre>
   </section>
 
   <!-- Verify Token -->

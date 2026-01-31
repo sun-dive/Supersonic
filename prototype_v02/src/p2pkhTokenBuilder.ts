@@ -9,9 +9,9 @@
  * - Bundle JSON is persisted in storage for recovery
  * - Explicit confirm/cancel for completing transfers
  */
-import { Transaction, P2PKH, PublicKey } from '@bsv/sdk'
+import { Transaction, P2PKH, PublicKey, LockingScript } from '@bsv/sdk'
 import { WocProvider, Utxo } from './wocProvider'
-import { encodeOpReturn, TokenOpReturnData, encodeTokenRules } from './opReturnCodec'
+import { encodeOpReturn, decodeOpReturn, TokenOpReturnData, encodeTokenRules } from './opReturnCodec'
 import {
   computeTokenId,
   createProofChain,
@@ -40,12 +40,6 @@ export interface OwnedToken {
   createdAt?: string           // ISO timestamp of genesis/transfer
   feePaid?: number             // fee in satoshis for the creating TX
   transferTxId?: string        // set when pending_transfer
-  transferBundleJson?: string  // saved bundle for recovery
-}
-
-export interface TokenBundle {
-  token: OwnedToken
-  proofChain: ProofChain
 }
 
 export interface GenesisParams {
@@ -61,7 +55,6 @@ export interface GenesisResult {
 export interface TransferResult {
   txId: string
   tokenId: string
-  bundleJson: string
 }
 
 // ─── Storage ────────────────────────────────────────────────────────
@@ -301,6 +294,8 @@ export class P2pkhTokenBuilder {
             tokenAttributes: token.tokenAttributes,
             ownerPubKey: recipientPubKeyHex,
             stateData: token.stateData,
+            genesisTxId: token.genesisTxId,
+            proofChainEntries: (proofChain ?? { genesisTxId: token.genesisTxId, entries: [] }).entries,
           }),
           satoshis: 0,
         })
@@ -309,31 +304,12 @@ export class P2pkhTokenBuilder {
 
     await this.provider.broadcast(rawHex)
 
-    // Build bundle for recipient
-    const recipientToken: OwnedToken = {
-      ...token,
-      currentTxId: txId,
-      currentOutputIndex: 0,
-      ownerPubKey: recipientPubKeyHex,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      feePaid: fee,
-      transferTxId: undefined,
-      transferBundleJson: undefined,
-    }
-    const bundle: TokenBundle = {
-      token: recipientToken,
-      proofChain: proofChain ?? { genesisTxId: token.genesisTxId, entries: [] },
-    }
-    const bundleJson = JSON.stringify(bundle, null, 2)
-
-    // Mark as pending_transfer with bundle saved
+    // Mark as pending_transfer
     token.status = 'pending_transfer'
     token.transferTxId = txId
-    token.transferBundleJson = bundleJson
     await this.store.updateToken(token)
 
-    return { txId, tokenId: actualTokenId, bundleJson }
+    return { txId, tokenId: actualTokenId }
   }
 
   /**
@@ -351,35 +327,33 @@ export class P2pkhTokenBuilder {
   }
 
   /**
-   * Get the saved bundle JSON for a pending transfer.
+   * Send satoshis to another BSV address.
+   *
+   * TX structure:
+   *   Input(s): funding UTXOs
+   *   Output 0: P2PKH(recipient) amount sats
+   *   Output 1: P2PKH(change)
    */
-  async getTransferBundle(tokenId: string): Promise<string | null> {
-    const token = await this.store.getToken(tokenId)
-    if (!token) return null
-    return token.transferBundleJson ?? null
-  }
+  async sendSats(recipientAddress: string, amount: number): Promise<{ txId: string; fee: number }> {
+    const key = this.provider.getPrivateKey()
+    const myAddress = this.provider.getAddress()
 
-  /**
-   * Import a token bundle received from a peer.
-   * Validates the token ID matches the genesis TXID.
-   */
-  async importBundle(bundleJson: string): Promise<OwnedToken> {
-    const bundle: TokenBundle = JSON.parse(bundleJson)
-    const { token, proofChain } = bundle
+    if (amount < 1) throw new Error('Amount must be at least 1 satoshi')
 
-    // Verify token ID
-    const expectedId = computeTokenId(token.genesisTxId, token.genesisOutputIndex)
-    if (expectedId !== token.tokenId) {
-      throw new Error(`Token ID mismatch: expected ${expectedId}, got ${token.tokenId}`)
-    }
+    const utxos = await this.provider.getUtxos()
+    if (utxos.length === 0) throw new Error('No UTXOs. Fund your wallet first.')
 
-    // Ensure imported token is marked active
-    token.status = 'active'
-    token.transferTxId = undefined
-    token.transferBundleJson = undefined
+    const { txId, rawHex, fee } = await this.buildFundedTx(
+      utxos, key, myAddress, (tx) => {
+        tx.addOutput({
+          lockingScript: new P2PKH().lock(recipientAddress),
+          satoshis: amount,
+        })
+      },
+    )
 
-    await this.store.addToken(token, proofChain)
-    return token
+    await this.provider.broadcast(rawHex)
+    return { txId, fee }
   }
 
   /**
@@ -422,6 +396,147 @@ export class P2pkhTokenBuilder {
 
     onStatus?.('Timed out waiting for confirmation.')
     return false
+  }
+
+  /**
+   * Check all active tokens for missing Merkle proofs and fetch them.
+   * This handles tokens that were minted or received but never got their
+   * proof chain updated (e.g. page was closed before confirmation).
+   */
+  async fetchMissingProofs(
+    onStatus?: (msg: string) => void,
+  ): Promise<number> {
+    const tokens = await this.store.listTokens()
+    let fetched = 0
+
+    for (const token of tokens) {
+      if (token.status === 'transferred') continue
+
+      const chain = await this.store.getProofChain(token.tokenId)
+      if (chain && chain.entries.length > 0) continue
+
+      // This token has no proof chain -- try to fetch one
+      const txId = token.currentTxId
+      onStatus?.(`Fetching proof for ${token.tokenName}...`)
+
+      try {
+        const proof = await this.provider.getMerkleProof(txId)
+        if (!proof) {
+          console.debug(`fetchMissingProofs: no proof yet for ${token.tokenName} (${txId.slice(0, 12)}...)`)
+          continue
+        }
+
+        const newChain = createProofChain(token.genesisTxId, proof)
+        await this.store.addToken(token, newChain)
+        fetched++
+        onStatus?.(`Got proof for ${token.tokenName}`)
+      } catch (e) {
+        console.warn(`fetchMissingProofs: error fetching proof for ${token.tokenName}:`, e)
+        continue
+      }
+    }
+
+    return fetched
+  }
+
+  /**
+   * Scan the wallet's address history for incoming MPT transfer TXs.
+   * Parses OP_RETURN outputs for on-chain bundle data and auto-imports
+   * any tokens addressed to this wallet that aren't already stored.
+   *
+   * Returns the list of newly imported tokens.
+   */
+  async checkIncomingTokens(
+    onStatus?: (msg: string) => void,
+  ): Promise<OwnedToken[]> {
+    const myPubKey = this.provider.getPublicKeyHex()
+    onStatus?.('Fetching transactions...')
+
+    // Fetch both history and UTXOs -- UTXOs reflect mempool state immediately,
+    // so unconfirmed transfer TXs show up here before the history endpoint catches up.
+    const [history, utxos] = await Promise.all([
+      this.provider.getAddressHistory(),
+      this.provider.getUtxos(),
+    ])
+
+    // Merge txIds from both sources, deduplicating
+    const txIdSet = new Set<string>()
+    for (const h of history) txIdSet.add(h.txId)
+    for (const u of utxos) txIdSet.add(u.txId)
+
+    const allTxIds = Array.from(txIdSet)
+
+    if (allTxIds.length === 0) {
+      onStatus?.('No transactions found.')
+      return []
+    }
+
+    const imported: OwnedToken[] = []
+    const existingTokens = await this.store.listTokens()
+    const existingTxIds = new Set(existingTokens.map(t => t.currentTxId))
+
+    onStatus?.(`Scanning ${allTxIds.length} transactions...`)
+
+    for (const txId of allTxIds) {
+      // Skip TXs we already have a token for
+      if (existingTxIds.has(txId)) continue
+
+      try {
+        const tx = await this.provider.getSourceTransaction(txId)
+
+        // Look for OP_RETURN outputs with MPT prefix addressed to us
+        for (const output of tx.outputs) {
+          if (!output.lockingScript) continue
+
+          const opData = decodeOpReturn(output.lockingScript as LockingScript)
+          if (!opData) continue
+          if (opData.ownerPubKey !== myPubKey) continue
+          if (!opData.genesisTxId) continue // genesis TXs don't have this field
+
+          // Reconstruct token from on-chain data
+          const tokenId = computeTokenId(opData.genesisTxId, 0)
+
+          // Skip if we already have this token
+          const existing = await this.store.getToken(tokenId)
+          if (existing) continue
+
+          const token: OwnedToken = {
+            tokenId,
+            genesisTxId: opData.genesisTxId,
+            genesisOutputIndex: 0,
+            currentTxId: txId,
+            currentOutputIndex: 0,
+            tokenName: opData.tokenName,
+            tokenRules: opData.tokenRules,
+            tokenAttributes: opData.tokenAttributes,
+            ownerPubKey: opData.ownerPubKey,
+            stateData: opData.stateData,
+            satoshis: TOKEN_SATS,
+            status: 'active',
+            createdAt: new Date().toISOString(),
+          }
+
+          // Reconstruct proof chain from on-chain binary data
+          const proofChain: ProofChain = {
+            genesisTxId: opData.genesisTxId,
+            entries: opData.proofChainEntries ?? [],
+          }
+
+          await this.store.addToken(token, proofChain)
+          imported.push(token)
+          onStatus?.(`Found token: ${token.tokenName} (${tokenId.slice(0, 12)}...)`)
+        }
+      } catch (e) {
+        // Log parse errors for debugging (most TXs won't be MPT transactions)
+        console.debug(`checkIncoming: skipping TX ${txId}:`, e)
+        continue
+      }
+    }
+
+    onStatus?.(imported.length > 0
+      ? `Done! Imported ${imported.length} token(s).`
+      : 'No new incoming tokens found.')
+    return imported
   }
 
   /**
@@ -605,7 +720,21 @@ export class P2pkhTokenBuilder {
     const token = await this.store.getToken(tokenId)
     if (!token) return { valid: false, reason: 'Token not found' }
 
-    const chain = await this.store.getProofChain(tokenId)
+    let chain = await this.store.getProofChain(tokenId)
+
+    // If no proof chain stored, try to fetch one on demand
+    if (!chain || chain.entries.length === 0) {
+      try {
+        const proof = await this.provider.getMerkleProof(token.currentTxId)
+        if (proof) {
+          chain = createProofChain(token.genesisTxId, proof)
+          await this.store.addToken(token, chain)
+        }
+      } catch (e) {
+        console.warn('verifyToken: failed to fetch Merkle proof on demand:', e)
+      }
+    }
+
     if (!chain || chain.entries.length === 0) {
       return { valid: false, reason: 'No proof chain (TX may not be confirmed yet)' }
     }

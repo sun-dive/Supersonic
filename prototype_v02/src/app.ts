@@ -57,16 +57,21 @@ function init() {
 
   // Bind buttons
   on('btn-refresh', refreshBalance)
+  on('btn-send', handleSend)
   on('btn-mint', handleMint)
   on('btn-transfer', handleTransfer)
-  on('btn-import', handleImport)
   on('btn-verify', handleVerify)
   on('btn-new-wallet', handleNewWallet)
   on('btn-restore-wallet', handleRestoreWallet)
+  on('btn-check-incoming', handleCheckIncoming)
 
   // Initial refresh
   refreshBalance()
   refreshTokenList()
+  // Auto-check for incoming tokens on page load (silent -- no status if nothing found)
+  silentCheckIncoming()
+  // Fetch missing Merkle proofs for tokens that never got them
+  fetchMissingProofs()
 }
 
 // ─── Actions ────────────────────────────────────────────────────────
@@ -78,6 +83,32 @@ async function refreshBalance() {
     setText('balance', `${bal} sats`)
   } catch (e: any) {
     setText('balance', `error: ${e.message}`)
+  }
+  // Also check for incoming tokens whenever balance is refreshed
+  silentCheckIncoming()
+}
+
+async function fetchMissingProofs() {
+  try {
+    const count = await builder.fetchMissingProofs()
+    if (count > 0) {
+      setText('incoming-status', `Updated ${count} proof chain(s)`)
+      await refreshTokenList()
+    }
+  } catch {
+    // Silent
+  }
+}
+
+async function silentCheckIncoming() {
+  try {
+    const imported = await builder.checkIncomingTokens()
+    if (imported.length > 0) {
+      setText('incoming-status', `Auto-imported ${imported.length} token(s)`)
+      await refreshTokenList()
+    }
+  } catch {
+    // Silent -- don't show errors for background checks
   }
 }
 
@@ -132,7 +163,6 @@ function renderTokenActions(t: OwnedToken): string {
   }
 
   if (t.status === 'pending_transfer') {
-    parts.push(`<button onclick="window._copyBundle('${t.tokenId}')" class="btn-copy">Copy Bundle for Recipient</button>`)
     parts.push(`<button onclick="window._confirmTransfer('${t.tokenId}')" class="btn-confirm">Confirm Sent</button>`)
   }
 
@@ -144,6 +174,41 @@ function renderTokenActions(t: OwnedToken): string {
   }
 
   return parts.join('\n')
+}
+
+async function handleSend() {
+  const address = inputVal('send-address')
+  const amountStr = inputVal('send-amount')
+
+  if (!address || !amountStr) {
+    setResult('send-result', 'Enter both a recipient address and amount.')
+    return
+  }
+
+  const amount = parseInt(amountStr, 10)
+  if (!amount || amount < 1) {
+    setResult('send-result', 'Amount must be at least 1 satoshi.')
+    return
+  }
+
+  const feeRate = parseInt(inputVal('fee-rate'), 10)
+  if (feeRate > 0) builder.feePerKb = feeRate
+
+  setResult('send-result', 'Building transaction...')
+
+  try {
+    const result = await builder.sendSats(address, amount)
+    setResult('send-result', [
+      'Sent!',
+      `TXID: ${result.txId}`,
+      `Amount: ${amount} sats`,
+      `Fee: ${result.fee} sats`,
+      `View: https://whatsonchain.com/tx/${result.txId}`,
+    ].join('\n'))
+    await refreshBalance()
+  } catch (e: any) {
+    setResult('send-result', `Error: ${e.message}`)
+  }
 }
 
 async function handleMint() {
@@ -216,11 +281,8 @@ async function handleTransfer() {
       `TXID: ${result.txId}`,
       `View: https://whatsonchain.com/tx/${result.txId}`,
       '',
-      'IMPORTANT: Copy the bundle below and send it to the recipient.',
-      'The bundle is also saved -- click "Copy Bundle" on the token card.',
-      '',
-      '--- BUNDLE JSON (copy everything below) ---',
-      result.bundleJson,
+      'Token data is encoded on-chain. The recipient can click',
+      '"Check Incoming Tokens" to auto-import it.',
     ].join('\n'))
 
     await refreshTokenList()
@@ -228,29 +290,6 @@ async function handleTransfer() {
 
   } catch (e: any) {
     setResult('transfer-result', `Error: ${e.message}`)
-  }
-}
-
-async function handleImport() {
-  const bundleJson = inputVal('import-bundle')
-  if (!bundleJson) {
-    setResult('import-result', 'Paste a token bundle JSON.')
-    return
-  }
-
-  try {
-    const token = await builder.importBundle(bundleJson)
-    setResult('import-result', [
-      'Token imported!',
-      `Name: ${token.tokenName}`,
-      `Token ID: ${token.tokenId}`,
-      `Owner: ${token.ownerPubKey.slice(0, 20)}...`,
-    ].join('\n'))
-
-    await refreshTokenList()
-
-  } catch (e: any) {
-    setResult('import-result', `Error: ${e.message}`)
   }
 }
 
@@ -271,6 +310,20 @@ async function handleVerify() {
     ].join('\n'))
   } catch (e: any) {
     setResult('verify-result', `Error: ${e.message}`)
+  }
+}
+
+async function handleCheckIncoming() {
+  setText('incoming-status', 'Scanning blockchain...')
+  try {
+    const imported = await builder.checkIncomingTokens((msg) => {
+      setText('incoming-status', msg)
+    })
+    if (imported.length > 0) {
+      await refreshTokenList()
+    }
+  } catch (e: any) {
+    setText('incoming-status', `Error: ${e.message}`)
   }
 }
 
@@ -312,33 +365,13 @@ function handleRestoreWallet() {
 ;(window as any)._verifyToken = (tokenId: string) => {
   const input = el('verify-token-id') as HTMLInputElement
   if (input) input.value = tokenId
-  handleVerify()
-}
-
-;(window as any)._copyBundle = async (tokenId: string) => {
-  try {
-    const bundleJson = await builder.getTransferBundle(tokenId)
-    if (!bundleJson) {
-      alert('No bundle found for this token.')
-      return
-    }
-    await navigator.clipboard.writeText(bundleJson)
-    alert('Bundle JSON copied to clipboard! Send it to the recipient so they can import it.')
-  } catch (e: any) {
-    // Clipboard API may fail in some contexts; fall back to showing in transfer-result
-    const bundleJson = await builder.getTransferBundle(tokenId)
-    if (bundleJson) {
-      setResult('transfer-result', [
-        'Could not copy to clipboard. Manually copy the bundle below:',
-        '',
-        bundleJson,
-      ].join('\n'))
-    }
-  }
+  handleVerify().then(() => {
+    el('verify-result')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
 }
 
 ;(window as any)._confirmTransfer = async (tokenId: string) => {
-  if (!confirm('Confirm that the recipient has received the bundle JSON? This will mark the token as transferred.')) return
+  if (!confirm('Mark this token as transferred?')) return
   try {
     await builder.confirmTransfer(tokenId)
     await refreshTokenList()

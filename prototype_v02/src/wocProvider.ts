@@ -9,7 +9,10 @@
 import { PrivateKey, PublicKey, Transaction } from '@bsv/sdk'
 import type { MerkleProofEntry, MerklePathNode } from './cryptoCompat'
 
-const WOC_BASE = 'https://api.whatsonchain.com/v1/bsv/main'
+// Use local proxy when running on localhost to avoid CORS issues
+const WOC_BASE = (typeof location !== 'undefined' && location.hostname === 'localhost')
+  ? '/woc/v1/bsv/main'
+  : 'https://api.whatsonchain.com/v1/bsv/main'
 
 export interface Utxo {
   txId: string
@@ -123,6 +126,24 @@ export class WocProvider {
     }
   }
 
+  // ── Address History ─────────────────────────────────────────────
+
+  /**
+   * Fetch transaction history for an address.
+   * Returns an array of { txId, blockHeight } objects, newest first.
+   */
+  async getAddressHistory(): Promise<{ txId: string; blockHeight: number }[]> {
+    const address = this.getAddress()
+    const resp = await fetch(`${WOC_BASE}/address/${address}/history`)
+    if (!resp.ok) throw new Error(`WoC history fetch failed: ${resp.status}`)
+    const data = await resp.json()
+    if (!Array.isArray(data)) return []
+    return data.map((entry: any) => ({
+      txId: entry.tx_hash as string,
+      blockHeight: (entry.height ?? 0) as number,
+    }))
+  }
+
   // ── Merkle Proof ────────────────────────────────────────────────
 
   /**
@@ -131,10 +152,19 @@ export class WocProvider {
    */
   async getMerkleProof(txId: string): Promise<MerkleProofEntry | null> {
     const resp = await fetch(`${WOC_BASE}/tx/${txId}/proof/tsc`)
-    if (!resp.ok) return null
+    if (!resp.ok) {
+      console.debug(`getMerkleProof: WoC returned ${resp.status} for ${txId.slice(0, 12)}...`)
+      return null
+    }
 
-    const data = await resp.json()
-    if (!data || !data.target) return null
+    const raw = await resp.json()
+    console.debug('getMerkleProof: raw response:', JSON.stringify(raw).slice(0, 200))
+    // WoC returns an array of proof objects; use the first one
+    const data = Array.isArray(raw) ? raw[0] : raw
+    if (!data || !data.target) {
+      console.debug('getMerkleProof: no target in proof data:', data)
+      return null
+    }
 
     // TSC proof format:
     // { index, txOrId, target (block hash), nodes: [hash|"*"...] }

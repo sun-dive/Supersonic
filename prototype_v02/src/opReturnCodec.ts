@@ -3,9 +3,24 @@
  *
  * Format: OP_0 OP_RETURN <"MPT"> <version:1> <tokenName> <tokenRules:8> <tokenAttributes> <ownerPubKey:33> <stateData>
  *
+ * Transfer TXs add two extra fields:
+ *   <genesisTxId:32> <proofChainBinary>
+ *
+ * Proof chain binary layout:
+ *   [1 byte: entry count]
+ *   Per entry:
+ *     [32 bytes: txId]
+ *     [4 bytes: blockHeight LE]
+ *     [32 bytes: merkleRoot]
+ *     [1 byte: path node count]
+ *     Per node:
+ *       [32 bytes: hash]
+ *       [1 byte: 0=L, 1=R]
+ *
  * Each field is a separate pushdata chunk.
  */
 import { LockingScript, OP } from '@bsv/sdk'
+import type { MerkleProofEntry, MerklePathNode } from './cryptoCompat'
 
 /** Script chunk: an opcode with optional data payload. */
 interface ScriptChunk {
@@ -22,6 +37,8 @@ export interface TokenOpReturnData {
   tokenAttributes: string // hex, variable
   ownerPubKey: string    // hex, 33 bytes compressed pubkey
   stateData: string      // hex, variable (can be empty)
+  genesisTxId?: string   // hex, 32 bytes -- present on transfer TXs
+  proofChainEntries?: MerkleProofEntry[] // proof chain entries -- binary-encoded on chain
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -47,9 +64,88 @@ function bytesToString(bytes: number[]): string {
   return new TextDecoder().decode(new Uint8Array(bytes))
 }
 
-/** Create a pushdata chunk for a byte array. */
+/** Create a pushdata chunk for a byte array, using correct OP_PUSHDATA encoding. */
 function pushData(data: number[]): ScriptChunk {
-  return { op: data.length, data } as ScriptChunk
+  const len = data.length
+  let op: number
+  if (len > 0 && len < OP.OP_PUSHDATA1) {
+    op = len // opcodes 1-75 mean "push next N bytes"
+  } else if (len < 256) {
+    op = OP.OP_PUSHDATA1 // 0x4c: next byte is length
+  } else if (len < 65536) {
+    op = OP.OP_PUSHDATA2 // 0x4d: next 2 bytes are length (LE)
+  } else {
+    op = OP.OP_PUSHDATA4 // 0x4e: next 4 bytes are length (LE)
+  }
+  return { op, data } as ScriptChunk
+}
+
+// ─── Proof Chain Binary Codec ────────────────────────────────────────
+
+/** Write a 32-bit unsigned integer as 4-byte little-endian. */
+function uint32LE(n: number): number[] {
+  return [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff]
+}
+
+/** Read a 32-bit unsigned integer from 4-byte little-endian. */
+function readUint32LE(bytes: number[], offset: number): number {
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0
+}
+
+/**
+ * Encode proof chain entries to compact binary.
+ *
+ * Layout: [1B entryCount] per entry: [32B txId][4B height LE][32B merkleRoot][1B nodeCount] per node: [32B hash][1B position]
+ */
+export function encodeProofChainBinary(entries: MerkleProofEntry[]): number[] {
+  const buf: number[] = [entries.length & 0xff]
+
+  for (const entry of entries) {
+    buf.push(...hexToBytes(entry.txId))          // 32 bytes
+    buf.push(...uint32LE(entry.blockHeight))      // 4 bytes
+    buf.push(...hexToBytes(entry.merkleRoot))     // 32 bytes
+    buf.push(entry.path.length & 0xff)            // 1 byte
+    for (const node of entry.path) {
+      buf.push(...hexToBytes(node.hash))          // 32 bytes
+      buf.push(node.position === 'L' ? 0 : 1)    // 1 byte
+    }
+  }
+
+  return buf
+}
+
+/**
+ * Decode proof chain entries from compact binary.
+ */
+export function decodeProofChainBinary(bytes: number[]): MerkleProofEntry[] {
+  if (bytes.length === 0) return []
+
+  const entries: MerkleProofEntry[] = []
+  let offset = 0
+  const entryCount = bytes[offset++]
+
+  for (let i = 0; i < entryCount; i++) {
+    const txId = bytesToHex(bytes.slice(offset, offset + 32)); offset += 32
+    const blockHeight = readUint32LE(bytes, offset); offset += 4
+    const merkleRoot = bytesToHex(bytes.slice(offset, offset + 32)); offset += 32
+    const nodeCount = bytes[offset++]
+
+    const path: MerklePathNode[] = []
+    for (let j = 0; j < nodeCount; j++) {
+      const hash = bytesToHex(bytes.slice(offset, offset + 32)); offset += 32
+      const position: 'L' | 'R' = bytes[offset++] === 0 ? 'L' : 'R'
+      path.push({ hash, position })
+    }
+
+    entries.push({ txId, blockHeight, merkleRoot, path })
+  }
+
+  return entries
 }
 
 // ─── Encode ─────────────────────────────────────────────────────────
@@ -75,6 +171,12 @@ export function encodeOpReturn(data: TokenOpReturnData): LockingScript {
     pushData(ownerBytes),
     pushData(stateBytes.length > 0 ? stateBytes : [0x00]), // at least 1 byte
   ]
+
+  // Optional on-chain bundle fields (transfer TXs only)
+  if (data.genesisTxId) {
+    chunks.push(pushData(hexToBytes(data.genesisTxId)))
+    chunks.push(pushData(encodeProofChainBinary(data.proofChainEntries ?? [])))
+  }
 
   return new LockingScript(chunks)
 }
@@ -111,13 +213,23 @@ export function decodeOpReturn(script: LockingScript): TokenOpReturnData | null 
   const ownerData = chunks[7].data ?? []
   const stateData = chunks[8].data ?? []
 
-  return {
+  const result: TokenOpReturnData = {
     tokenName: bytesToString(nameData as number[]),
     tokenRules: bytesToHex(rulesData as number[]),
     tokenAttributes: bytesToHex(attrsData as number[]),
     ownerPubKey: bytesToHex(ownerData as number[]),
     stateData: bytesToHex(stateData as number[]),
   }
+
+  // Optional on-chain bundle fields (chunks 9 and 10)
+  if (chunks.length >= 11) {
+    const genesisTxIdData = chunks[9].data ?? []
+    const proofChainData = chunks[10].data ?? []
+    result.genesisTxId = bytesToHex(genesisTxIdData as number[])
+    result.proofChainEntries = decodeProofChainBinary(proofChainData as number[])
+  }
+
+  return result
 }
 
 // ─── Token Rules Encoding ───────────────────────────────────────────
