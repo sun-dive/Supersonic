@@ -100,10 +100,28 @@
   <!-- Mint Token -->
   <section>
     <h2>Mint Token</h2>
-    <input id="token-name" placeholder="Token name (e.g. My First MPT)" />
-    <input id="token-attrs" placeholder="Attributes hex (optional, e.g. 01 for #1)" />
+    <div class="row">
+      <input id="token-name" placeholder="Token name (e.g. My First MPT)" style="flex:1;" />
+      <button id="btn-name-mode" style="white-space:nowrap; min-width:70px; background:#30363d;">Text</button>
+    </div>
+    <div class="row">
+      <input id="token-attrs" placeholder="Attributes (optional, e.g. 01 for #1)" style="flex:1;" />
+      <button id="btn-attrs-mode" style="white-space:nowrap; min-width:70px; background:#30363d;">Text</button>
+    </div>
+    <div class="row">
+      <input id="token-state" placeholder="State data (mutable field)" style="flex:1;" />
+      <button id="btn-state-mode" style="white-space:nowrap; min-width:70px; background:#30363d;">Text</button>
+    </div>
+    <p class="arch-note" id="field-mode-hint">Text mode: input is UTF-8 encoded to hex. Toggle individual fields for raw hex input.</p>
+    <div class="row">
+      <div style="width:120px;"><input id="token-supply" type="number" placeholder="Supply" value="1" min="1" max="65535" style="width:100%;" /><span class="arch-note">Supply</span></div>
+      <div style="width:120px;"><input id="token-divisibility" type="number" placeholder="Divisibility" value="0" min="0" max="65535" style="width:100%;" /><span class="arch-note">Divisibility</span></div>
+      <div style="width:120px;"><input id="token-restrictions" type="number" placeholder="Restrictions" value="0" min="0" max="65535" style="width:100%;" /><span class="arch-note">Restrictions</span></div>
+      <div style="width:120px;"><input id="token-rules-version" type="number" placeholder="Rules ver." value="1" min="0" max="65535" style="width:100%;" /><span class="arch-note">Rules ver.</span></div>
+    </div>
+    <p class="arch-note">All immutable after mint. Divisibility 0 = NFT. Restrictions = bitfield.</p>
     <input id="fee-rate" type="number" placeholder="Fee rate (sats/KB)" value="150" min="1" style="width:200px;" />
-    <button id="btn-mint">Mint NFT</button>
+    <button id="btn-mint">Mint Token</button>
     <pre id="mint-result"></pre>
   </section>
 

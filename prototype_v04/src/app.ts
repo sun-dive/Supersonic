@@ -12,12 +12,18 @@ import { PrivateKey } from '@bsv/sdk'
 import { WalletProvider } from './walletProvider'
 import { TokenBuilder } from './tokenBuilder'
 import { TokenStore, LocalStorageBackend, OwnedToken } from './tokenStore'
+import { decodeTokenRules } from './opReturnCodec'
 
 // ─── Globals ────────────────────────────────────────────────────────
 
 let provider: WalletProvider
 let builder: TokenBuilder
 let store: TokenStore
+let fieldModes: Record<string, 'text' | 'hex'> = {
+  name: 'text',
+  attrs: 'text',
+  state: 'text',
+}
 
 const WIF_KEY = 'mpt:wallet:wif'
 
@@ -58,6 +64,9 @@ function init() {
   on('btn-new-wallet', handleNewWallet)
   on('btn-restore-wallet', handleRestoreWallet)
   on('btn-check-incoming', handleCheckIncoming)
+  on('btn-name-mode', () => toggleFieldMode('name'))
+  on('btn-attrs-mode', () => toggleFieldMode('attrs'))
+  on('btn-state-mode', () => toggleFieldMode('state'))
 
   refreshBalance()
   refreshTokenList()
@@ -116,13 +125,59 @@ async function refreshTokenList() {
     return
   }
 
-  container.innerHTML = tokens.map(t => {
-    const statusBadge = renderStatusBadge(t.status)
-    const actions = renderTokenActions(t)
+  // Group tokens by genesis TXID
+  const groups = new Map<string, OwnedToken[]>()
+  for (const t of tokens) {
+    const key = t.genesisTxId
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(t)
+  }
+  // Sort each group by output index
+  for (const group of groups.values()) {
+    group.sort((a, b) => a.genesisOutputIndex - b.genesisOutputIndex)
+  }
+
+  container.innerHTML = Array.from(groups.entries()).map(([genesisTxId, group]) => {
+    if (group.length === 1) {
+      return renderTokenCard(group[0])
+    }
+    // Multi-token mint: show card with dropdown selector
+    const first = group[0]
+    const selectId = `sel-${genesisTxId.slice(0, 12)}`
+    const detailId = `detail-${genesisTxId.slice(0, 12)}`
+    const options = group.map((t, idx) =>
+      `<option value="${t.tokenId}">#${idx + 1} (output ${t.genesisOutputIndex}) ${t.status !== 'active' ? '- ' + t.status : ''}</option>`
+    ).join('')
+    const activeCount = group.filter(t => t.status === 'active').length
     return `
+    <div class="token-card">
+      <div class="token-header">${escHtml(first.tokenName)} <span class="badge badge-active">${activeCount}/${group.length} active</span></div>
+      <div class="token-field"><span class="label">Genesis TXID:</span> <code class="selectable">${genesisTxId}</code></div>
+      <div class="token-field"><span class="label">Rules:</span> ${renderRules(first.tokenRules)}</div>
+      <div class="token-field" style="margin-top:6px;">
+        <span class="label">Select token:</span>
+        <select id="${selectId}" onchange="window._selectGroupToken('${genesisTxId.slice(0, 12)}', this.value)" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:4px 8px;border-radius:4px;">
+          ${options}
+        </select>
+      </div>
+      <div id="${detailId}">${renderTokenDetail(first)}</div>
+    </div>`
+  }).join('')
+}
+
+function renderTokenCard(t: OwnedToken): string {
+  const statusBadge = renderStatusBadge(t.status)
+  const actions = renderTokenActions(t)
+  const rules = renderRules(t.tokenRules)
+  const attrsDisplay = renderHexField(t.tokenAttributes)
+  const stateDisplay = renderStateData(t.stateData)
+  return `
     <div class="token-card ${t.status === 'transferred' ? 'token-transferred' : ''} ${t.status === 'pending_transfer' ? 'token-pending' : ''}">
       <div class="token-header">${escHtml(t.tokenName)} ${statusBadge}</div>
       <div class="token-field"><span class="label">Token ID:</span> <code class="selectable">${t.tokenId}</code></div>
+      <div class="token-field"><span class="label">Rules:</span> ${rules}</div>
+      <div class="token-field"><span class="label">Attributes:</span> ${attrsDisplay}</div>
+      <div class="token-field"><span class="label">State Data:</span> ${stateDisplay}</div>
       <div class="token-field"><span class="label">Current TXID:</span> <code class="selectable">${t.currentTxId}</code></div>
       <div class="token-field"><span class="label">Output:</span> ${t.currentOutputIndex}</div>
       <div class="token-field"><span class="label">Sats:</span> ${t.satoshis}</div>
@@ -130,8 +185,26 @@ async function refreshTokenList() {
       ${t.feePaid !== undefined ? `<div class="token-field"><span class="label">Fee:</span> ${t.feePaid} sats</div>` : ''}
       ${t.transferTxId ? `<div class="token-field"><span class="label">Transfer TXID:</span> <code class="selectable">${t.transferTxId}</code></div>` : ''}
       <div class="token-actions">${actions}</div>
-    </div>
-  `}).join('')
+    </div>`
+}
+
+function renderTokenDetail(t: OwnedToken): string {
+  const statusBadge = renderStatusBadge(t.status)
+  const actions = renderTokenActions(t)
+  const attrsDisplay = renderHexField(t.tokenAttributes)
+  const stateDisplay = renderStateData(t.stateData)
+  return `
+    <div class="${t.status === 'transferred' ? 'token-transferred' : ''} ${t.status === 'pending_transfer' ? 'token-pending' : ''}">
+      <div class="token-field"><span class="label">Status:</span> ${statusBadge}</div>
+      <div class="token-field"><span class="label">Token ID:</span> <code class="selectable">${t.tokenId}</code></div>
+      <div class="token-field"><span class="label">Attributes:</span> ${attrsDisplay}</div>
+      <div class="token-field"><span class="label">State Data:</span> ${stateDisplay}</div>
+      <div class="token-field"><span class="label">Current TXID:</span> <code class="selectable">${t.currentTxId}</code></div>
+      <div class="token-field"><span class="label">Output:</span> ${t.currentOutputIndex}</div>
+      <div class="token-field"><span class="label">Sats:</span> ${t.satoshis}</div>
+      ${t.transferTxId ? `<div class="token-field"><span class="label">Transfer TXID:</span> <code class="selectable">${t.transferTxId}</code></div>` : ''}
+      <div class="token-actions">${actions}</div>
+    </div>`
 }
 
 function renderStatusBadge(status: string): string {
@@ -163,6 +236,38 @@ function renderTokenActions(t: OwnedToken): string {
   }
 
   return parts.join('\n')
+}
+
+function renderRules(rulesHex: string): string {
+  if (!rulesHex || rulesHex.length !== 16) return `<code>${escHtml(rulesHex || '(none)')}</code>`
+  const r = decodeTokenRules(rulesHex)
+  return `Supply=${r.supply}, Divisibility=${r.divisibility}, Restrictions=0x${r.restrictions.toString(16).padStart(4, '0')}, Version=${r.version}`
+}
+
+function renderHexField(hex: string): string {
+  if (!hex || hex === '00') return '<span class="muted">(none)</span>'
+  try {
+    const bytes = new Uint8Array(hex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
+    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    if (/^[\x20-\x7e\t\n\r]+$/.test(decoded)) {
+      return `"${escHtml(decoded)}"<br><code class="muted">${escHtml(hex)}</code>`
+    }
+  } catch { /* not valid UTF-8 */ }
+  return `<code>${escHtml(hex)}</code>`
+}
+
+function renderStateData(stateHex: string): string {
+  if (!stateHex || stateHex === '00') return '<span class="muted">(empty)</span>'
+  // Try to decode as UTF-8 text
+  let textPreview = ''
+  try {
+    const bytes = new Uint8Array(stateHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
+    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    if (/^[\x20-\x7e\t\n\r]+$/.test(decoded)) {
+      textPreview = `"${escHtml(decoded)}"<br>`
+    }
+  } catch { /* not valid UTF-8 */ }
+  return `${textPreview}<code class="muted">${escHtml(stateHex)}</code>`
 }
 
 async function handleSend() {
@@ -200,13 +305,41 @@ async function handleSend() {
   }
 }
 
-async function handleMint() {
-  const name = inputVal('token-name')
-  const attrs = inputVal('token-attrs') || '00'
+function toggleFieldMode(field: string) {
+  fieldModes[field] = fieldModes[field] === 'text' ? 'hex' : 'text'
+  const btn = el(`btn-${field}-mode`)
+  if (btn) btn.textContent = fieldModes[field] === 'text' ? 'Text' : 'Hex'
+  const hint = el('field-mode-hint')
+  if (hint) hint.textContent = Object.values(fieldModes).every(m => m === 'text')
+    ? 'Text mode: input is UTF-8 encoded to hex. Toggle individual fields for raw hex input.'
+    : 'Some fields in hex mode: raw hex bytes expected. Toggle to switch back to text.'
+}
 
-  if (!name) {
+function textToHex(text: string): string {
+  return Array.from(new TextEncoder().encode(text))
+    .map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function handleMint() {
+  const nameRaw = inputVal('token-name')
+  const attrsRaw = inputVal('token-attrs')
+  const stateRaw = inputVal('token-state')
+  const supply = parseInt(inputVal('token-supply'), 10) || 1
+  const divisibility = parseInt(inputVal('token-divisibility'), 10) || 0
+  const restrictions = parseInt(inputVal('token-restrictions'), 10) || 0
+  const rulesVersion = parseInt(inputVal('token-rules-version'), 10) || 1
+
+  if (!nameRaw) {
     setResult('mint-result', 'Enter a token name.')
     return
+  }
+
+  // Convert fields based on their individual text/hex mode
+  const name = fieldModes.name === 'text' ? nameRaw : new TextDecoder().decode(new Uint8Array(nameRaw.match(/.{1,2}/g)?.map(b => parseInt(b, 16)) ?? []))
+  const attrs = attrsRaw ? (fieldModes.attrs === 'text' ? textToHex(attrsRaw) : attrsRaw) : '00'
+  let stateData = ''
+  if (stateRaw) {
+    stateData = fieldModes.state === 'text' ? textToHex(stateRaw) : stateRaw
   }
 
   const feeRate = parseInt(inputVal('fee-rate'), 10)
@@ -218,12 +351,22 @@ async function handleMint() {
     const result = await builder.createGenesis({
       tokenName: name,
       attributes: attrs,
+      supply,
+      divisibility,
+      restrictions,
+      rulesVersion,
+      stateData,
     })
+
+    const count = result.tokenIds.length
+    const idSummary = count === 1
+      ? `Token ID: ${result.tokenIds[0]}`
+      : `Minted ${count} tokens (first: ${result.tokenIds[0].slice(0, 16)}...)`
 
     setResult('mint-result', [
       'Genesis broadcast!',
       `TXID: ${result.txId}`,
-      `Token ID: ${result.tokenId}`,
+      idSummary,
       `View: https://whatsonchain.com/tx/${result.txId}`,
       '',
       'Polling for Merkle proof (may take ~10 min)...',
@@ -232,10 +375,10 @@ async function handleMint() {
     await refreshTokenList()
     await refreshBalance()
 
-    builder.pollForProof(result.tokenId, result.txId, (msg) => {
+    builder.pollForProof(result.tokenIds[0], result.txId, (msg) => {
       setResult('mint-result', [
         `TXID: ${result.txId}`,
-        `Token ID: ${result.tokenId}`,
+        idSummary,
         msg,
       ].join('\n'))
     }).then(found => {
@@ -344,7 +487,14 @@ function handleRestoreWallet() {
 
 // ─── Window-exposed helpers for inline onclick handlers ─────────────
 
-(window as any)._selectForTransfer = (tokenId: string) => {
+;(window as any)._selectGroupToken = async (genKey: string, tokenId: string) => {
+  const token = await store.getToken(tokenId)
+  if (!token) return
+  const detailEl = el(`detail-${genKey}`)
+  if (detailEl) detailEl.innerHTML = renderTokenDetail(token)
+}
+
+;(window as any)._selectForTransfer = (tokenId: string) => {
   const input = el('transfer-token-id') as HTMLInputElement
   if (input) input.value = tokenId
 }

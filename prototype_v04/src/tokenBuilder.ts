@@ -34,12 +34,17 @@ import {
 
 export interface GenesisParams {
   tokenName: string
-  attributes?: string
+  attributes?: string      // hex (default '00')
+  supply?: number          // default 1
+  divisibility?: number    // default 0
+  restrictions?: number    // default 0
+  rulesVersion?: number    // default 1
+  stateData?: string       // hex (default '')
 }
 
 export interface GenesisResult {
   txId: string
-  tokenId: string
+  tokenIds: string[]
 }
 
 export interface TransferResult {
@@ -209,59 +214,76 @@ export class TokenBuilder {
       throw new Error('No spendable UTXOs (token UTXOs are protected). Fund your wallet address first.')
     }
 
-    const tokenRulesHex = encodeTokenRules(1, 0, 0, 1)
+    const tokenRulesHex = encodeTokenRules(
+      params.supply ?? 1,
+      params.divisibility ?? 0,
+      params.restrictions ?? 0,
+      params.rulesVersion ?? 1,
+    )
     const attrsHex = params.attributes ?? '00'
+    const stateData = params.stateData ?? ''
     const opReturnData: TokenOpReturnData = {
       tokenName: params.tokenName,
       tokenRules: tokenRulesHex,
       tokenAttributes: attrsHex,
-      stateData: '',
+      stateData,
     }
+
+    const supply = params.supply ?? 1
 
     const { rawHex, txId, fee } = await this.buildFundedTx(
       utxos, address, (t) => {
-        // v04: Output 0 = OP_RETURN, Output 1 = P2PKH (token)
+        // Output 0 = OP_RETURN (shared metadata)
         t.addOutput({
           lockingScript: encodeOpReturn(opReturnData),
           satoshis: 0,
         })
-        t.addOutput({
-          lockingScript: new P2PKH().lock(address),
-          satoshis: TOKEN_SATS,
-        })
+        // Outputs 1..N = P2PKH (one per token unit)
+        for (let i = 0; i < supply; i++) {
+          t.addOutput({
+            lockingScript: new P2PKH().lock(address),
+            satoshis: TOKEN_SATS,
+          })
+        }
       },
     )
 
     await this.provider.broadcast(rawHex)
 
-    // v04: outputIndex = 1 (P2PKH is Output 1, OP_RETURN is Output 0)
     const immutableBytes = buildImmutableChunkBytes(
       params.tokenName,
       tokenRulesHex,
       attrsHex,
     )
-    const tokenId = computeTokenId(txId, 1, immutableBytes)
 
-    const ownedToken: OwnedToken = {
-      tokenId,
-      genesisTxId: txId,
-      genesisOutputIndex: 1,
-      currentTxId: txId,
-      currentOutputIndex: 1,
-      tokenName: params.tokenName,
-      tokenRules: tokenRulesHex,
-      tokenAttributes: attrsHex,
-      stateData: '',
-      satoshis: TOKEN_SATS,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      feePaid: fee,
+    const tokenIds: string[] = []
+    const createdAt = new Date().toISOString()
+    const emptyChain: ProofChain = { genesisTxId: txId, entries: [] }
+
+    for (let i = 1; i <= supply; i++) {
+      const tokenId = computeTokenId(txId, i, immutableBytes)
+      tokenIds.push(tokenId)
+
+      const ownedToken: OwnedToken = {
+        tokenId,
+        genesisTxId: txId,
+        genesisOutputIndex: i,
+        currentTxId: txId,
+        currentOutputIndex: i,
+        tokenName: params.tokenName,
+        tokenRules: tokenRulesHex,
+        tokenAttributes: attrsHex,
+        stateData,
+        satoshis: TOKEN_SATS,
+        status: 'active',
+        createdAt,
+        feePaid: i === 1 ? fee : undefined,
+      }
+
+      await this.store.addToken(ownedToken, emptyChain)
     }
 
-    const emptyChain: ProofChain = { genesisTxId: txId, entries: [] }
-    await this.store.addToken(ownedToken, emptyChain)
-
-    return { txId, tokenId }
+    return { txId, tokenIds }
   }
 
   // ── Transfer ──────────────────────────────────────────────────
