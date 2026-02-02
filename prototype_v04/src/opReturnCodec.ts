@@ -300,6 +300,48 @@ export function buildImmutableChunkBytes(
   return [...nameBytes, ...rulesBytes, ...attrsBytes]
 }
 
+// ─── File OP_RETURN (second output for file data in genesis TX) ─────
+
+const MPT_FILE_MARKER = [0x4d, 0x50, 0x54, 0x2d, 0x46, 0x49, 0x4c, 0x45] // "MPT-FILE"
+
+export interface FileOpReturnData {
+  mimeType: string
+  fileName: string
+  bytes: Uint8Array
+}
+
+/** Build a second OP_RETURN output containing embedded file data. */
+export function buildFileOpReturn(file: FileOpReturnData): LockingScript {
+  const chunks: ScriptChunk[] = [
+    { op: OP.OP_0 },
+    { op: OP.OP_RETURN },
+    pushData(MPT_FILE_MARKER),
+    pushData(stringToBytes(file.mimeType)),
+    pushData(stringToBytes(file.fileName)),
+    pushData(Array.from(file.bytes)),
+  ]
+  return new LockingScript(chunks)
+}
+
+/** Parse a file OP_RETURN output. Returns null if not an MPT-FILE output. */
+export function parseFileOpReturn(script: LockingScript): FileOpReturnData | null {
+  const raw = script.toBinary()
+  if (raw.length < 4 || raw[0] !== 0x00 || raw[1] !== 0x6a) return null
+
+  const chunks = parsePushdataChunks(raw, 2)
+  if (chunks.length < 4) return null
+
+  // Check MPT-FILE marker
+  const marker = chunks[0]
+  if (marker.length !== 8 || bytesToString(marker) !== 'MPT-FILE') return null
+
+  return {
+    mimeType: bytesToString(chunks[1]),
+    fileName: bytesToString(chunks[2]),
+    bytes: new Uint8Array(chunks[3]),
+  }
+}
+
 // ─── Token Rules Encoding ───────────────────────────────────────────
 
 /**

@@ -41,7 +41,8 @@ All immutable fields are cryptographically bound to the Token ID. Tampering with
 - Immutable data shared by all tokens in the NFT set. Set at genesis. If unused, the chunk is a zero-length pushdata (the chunk must still be present for positional parsing).
 - All tokens within a single genesis TX have identical attributes.
 - For tokens with different attributes (e.g. different rarity tiers), use separate genesis TXs (separate NFT sets).
-- Examples: rarity tier, trait set, content hash, collection metadata.
+- When a file is embedded, tokenAttributes contains the SHA-256 hash of the file (32 bytes). The full file data lives in a separate OP_RETURN output in the genesis TX only (see Embedded File Data section).
+- Examples: rarity tier, trait set, content hash, collection metadata, SHA-256 file hash.
 
 ### Mutable Fields
 
@@ -63,6 +64,16 @@ Output 1:  P2PKH to minter's address (1 sat) -- the token UTXO
 Output 2:  Change back to minter (if needed)
 ```
 
+**Genesis TX (mint) -- single token with embedded file:**
+
+```
+Input 0:   Funding UTXO (signed by minter)
+Output 0:  OP_RETURN with token metadata (0 sat) -- shared token data (attrs = SHA-256 of file)
+Output 1:  P2PKH to minter's address (1 sat) -- the token UTXO
+Output 2:  OP_RETURN with MPT-FILE data (0 sat) -- embedded file (mimeType, fileName, bytes)
+Output 3:  Change back to minter (if needed)
+```
+
 **Genesis TX (mint) -- batch (supply = N):**
 
 ```
@@ -72,10 +83,11 @@ Output 1:  P2PKH to minter's address (1 sat) -- token #0
 Output 2:  P2PKH to minter's address (1 sat) -- token #1
 ...
 Output N:  P2PKH to minter's address (1 sat) -- token #(N-1)
-Output N+1: Change back to minter (if needed)
+Output N+1: OP_RETURN with MPT-FILE data (0 sat) -- if file embedded
+Output N+2: Change back to minter (if needed)
 ```
 
-All tokens in a batch share a single OP_RETURN (Output 0) containing identical metadata. Each token is a separate 1-sat P2PKH output at indices 1 through N. The `outputIndex` used in the Token ID is the actual Bitcoin output index (1, 2, ..., N), not a zero-based token number. Token #0 in the set has `outputIndex = 1`.
+All tokens in a batch share a single OP_RETURN (Output 0) containing identical metadata. Each token is a separate 1-sat P2PKH output at indices 1 through N. The `outputIndex` used in the Token ID is the actual Bitcoin output index (1, 2, ..., N), not a zero-based token number. Token #0 in the set has `outputIndex = 1`. When a file is embedded, the MPT-FILE OP_RETURN is placed after the token P2PKH outputs and before the change output.
 
 **Transfer TX:**
 
@@ -112,9 +124,9 @@ The OP_RETURN contains these fields as separate pushdata chunks:
 | 8 | genesisTxId | 32B | *Transfer only:* raw genesis TX hash |
 | 9 | proofChainBinary | variable | *Transfer only:* compact binary proof chain |
 
-**Genesis TX OP_RETURN:** Chunks 0-7 (8 chunks). No genesisTxId (chunk 8) or proofChainBinary (chunk 9) -- not needed at mint time.
+**Genesis TX OP_RETURN:** Chunks 0-7 (8 chunks). No genesisTxId (chunk 8) or proofChainBinary (chunk 9) -- not needed at mint time. When a file is embedded, a separate OP_RETURN output with the `MPT-FILE` marker is added to the genesis TX (see Embedded File Data).
 
-**Transfer TX OP_RETURN:** Chunks 0-9 (10 chunks). genesisTxId and proofChainBinary carry the token's verifiable history. Ownership is determined by the P2PKH output, not by any OP_RETURN field.
+**Transfer TX OP_RETURN:** Chunks 0-9 (10 chunks). genesisTxId and proofChainBinary carry the token's verifiable history. Ownership is determined by the P2PKH output, not by any OP_RETURN field. No file data is included -- only the 32-byte hash in tokenAttributes.
 
 **Parsing rule:** The chunk count distinguishes genesis from transfer: 8 chunks = genesis, 10 chunks = transfer. stateData (chunk 7) is always present with a minimum of 1 byte to ensure consistent chunk counts.
 
@@ -184,6 +196,55 @@ The current design rewrites the full OP_RETURN on every transfer, including `sta
 
 For large stateData, the cleanest mitigation is **hash-only on-chain**: store `SHA-256(stateData)` in the OP_RETURN (32 bytes regardless of data size), and pass the actual data in the bundle or fetch it from the genesis TX.
 
+### Embedded File Data
+
+MPT supports embedding files (images, text documents, small media) directly in the genesis transaction. The approach is **hash-on-chain, data-in-genesis**:
+
+- **tokenAttributes** stores `SHA-256(fileData)` (32 bytes / 64 hex chars) -- immutable, bound to Token ID.
+- **Full file data** lives in a **second OP_RETURN output** in the genesis TX only, using the `MPT-FILE` format.
+- **Transfer TXs** carry only the 32-byte hash in tokenAttributes -- no file bloat on transfers.
+
+#### File OP_RETURN Format (MPT-FILE)
+
+The second OP_RETURN output in a genesis TX with an embedded file:
+
+```
+Chunk 0:  OP_0
+Chunk 1:  OP_RETURN
+Chunk 2:  "MPT-FILE"       (8 bytes, marker to distinguish from main MPT OP_RETURN)
+Chunk 3:  mimeType          (UTF-8, e.g. "image/png")
+Chunk 4:  fileName          (UTF-8, original file name)
+Chunk 5:  fileBytes          (raw binary file data)
+```
+
+The `MPT-FILE` marker (ASCII `0x4d 0x50 0x54 0x2d 0x46 0x49 0x4c 0x45`) distinguishes this output from the main MPT metadata OP_RETURN.
+
+#### File Verification
+
+To verify the embedded file matches the token:
+
+1. Fetch the genesis TX (by `genesisTxId`)
+2. Scan outputs for an OP_RETURN with the `MPT-FILE` marker
+3. Parse the file data (mimeType, fileName, bytes)
+4. Compute `SHA-256(bytes)` and compare to tokenAttributes
+5. If the hash matches, the file is authentic and bound to the token's identity
+
+Since tokenAttributes is part of the Token ID computation, any tampering with the file hash causes a Token ID mismatch.
+
+#### Pruning and Recovery
+
+OP_RETURN data is not part of the UTXO set and may be pruned by miners to save storage. To mitigate this:
+
+1. **Local IndexedDB cache**: Files are cached locally in the browser's IndexedDB (`mpt-files` database) after first retrieval. This survives page reloads and avoids repeated genesis TX fetches.
+2. **Genesis TX fetch**: If the cache misses, the wallet fetches the full genesis TX from WhatsOnChain and extracts the file.
+3. **Manual recovery**: If the genesis TX has been pruned and is unavailable, the user can re-upload the original file. The wallet computes `SHA-256` of the provided file and compares it to the stored hash in tokenAttributes. If the hashes match, the file is accepted and cached locally.
+
+#### Size Considerations
+
+- BSV has no OP_RETURN size limit, so files of any size can technically be embedded.
+- Practical limits: larger files increase the genesis TX fee proportionally. The UI enforces a 250KB hard limit as a reasonable default.
+- Transfer TXs are unaffected by file size -- they only carry the 32-byte hash.
+
 ---
 
 ## Architecture
@@ -226,8 +287,9 @@ For large stateData, the cleanest mitigation is **hash-only on-chain**: store `S
 | `opReturnCodec.ts` | Protocol | OP_RETURN script encoding/decoding. Binary proof chain codec. |
 | `walletProvider.ts` | Wallet | WhatsOnChain API client. UTXOs, broadcast, raw TX, block headers, Merkle proofs, address history. |
 | `tokenStore.ts` | Wallet | localStorage persistence for tokens and proof chains. |
-| `tokenBuilder.ts` | Wallet | Token lifecycle: mint, transfer, verify, detect incoming. UTXO quarantine. |
-| `app.ts` | UI | Browser entry point. DOM manipulation, event handlers, rendering. |
+| `tokenBuilder.ts` | Wallet | Token lifecycle: mint, transfer, verify, detect incoming. UTXO quarantine. File fetch from genesis. |
+| `fileCache.ts` | Wallet | IndexedDB-backed file cache for embedded NFT file data. Pruning recovery store. |
+| `app.ts` | UI | Browser entry point. DOM manipulation, event handlers, rendering. File upload, viewer, recovery. |
 | `index.html` | UI | Single-page wallet interface. |
 | `build.mjs` | Tooling | esbuild bundler: `src/app.ts` -> `bundle.js` (IIFE, browser). |
 | `serve.mjs` | Tooling | Dev server with WoC reverse proxy to bypass CORS. |
@@ -247,18 +309,22 @@ walletProvider.ts -->  @bsv/sdk (Transaction)
 
 tokenStore.ts     -->  tokenProtocol.ts (types: ProofChain)
 
-tokenBuilder.ts   -->  @bsv/sdk (Transaction, P2PKH, LockingScript)
+tokenBuilder.ts   -->  @bsv/sdk (Transaction, P2PKH, LockingScript, Hash)
                   -->  walletProvider.ts (WalletProvider, Utxo)
                   -->  tokenStore.ts (TokenStore, OwnedToken)
                   -->  tokenProtocol.ts (computeTokenId, createProofChain, extendProofChain,
                                          verifyProofChainAsync, ProofChain, BlockHeader,
                                          VerificationResult)
-                  -->  opReturnCodec.ts (encodeOpReturn, decodeOpReturn, encodeTokenRules)
+                  -->  opReturnCodec.ts (encodeOpReturn, decodeOpReturn, encodeTokenRules,
+                                         buildFileOpReturn, parseFileOpReturn, FileOpReturnData)
 
-app.ts            -->  @bsv/sdk (PrivateKey)
+fileCache.ts      -->  (no imports -- uses browser IndexedDB API only)
+
+app.ts            -->  @bsv/sdk (PrivateKey, Hash)
                   -->  walletProvider.ts (WalletProvider)
                   -->  tokenBuilder.ts (TokenBuilder)
                   -->  tokenStore.ts (TokenStore, LocalStorageBackend, OwnedToken)
+                  -->  fileCache.ts (FileCache)
 ```
 
 ---
@@ -543,12 +609,13 @@ Orchestrates all token operations. Coordinates between the wallet provider, toke
 #### createGenesis(params)
 
 1. Fetch safe UTXOs (quarantine applied)
-2. Build OP_RETURN with token metadata
-3. Construct TX: funding input -> OP_RETURN + token output(s) (1 sat each) + change
-4. Sign and broadcast
-5. Compute token ID from TX hash
-6. Store token with empty proof chain
-7. Return `{ txId, tokenId }`
+2. If `fileData` is provided: compute `SHA-256(fileData.bytes)` and use as tokenAttributes; build MPT-FILE OP_RETURN
+3. Build main OP_RETURN with token metadata
+4. Construct TX: funding input -> OP_RETURN + token output(s) (1 sat each) + [MPT-FILE OP_RETURN if file] + change
+5. Sign and broadcast
+6. Compute token ID from TX hash
+7. Store token with empty proof chain
+8. Return `{ txId, tokenId }`
 
 #### createTransfer(tokenId, recipientAddress)
 
@@ -563,7 +630,7 @@ Orchestrates all token operations. Coordinates between the wallet provider, toke
 
 #### confirmTransfer(tokenId)
 
-Marks a `pending_transfer` token as `transferred`.
+Marks a `pending_transfer` token as `transferred`. Called automatically by the transfer confirmation polling system (see `pollForConfirmation`).
 
 #### sendSats(recipientAddress, amount)
 
@@ -582,6 +649,14 @@ Standard BSV payment using safe UTXOs only.
 
 Polls WoC for a Merkle proof every 15 seconds, up to 60 attempts. Once found, stores the proof chain. Used after minting to wait for block confirmation.
 
+#### pollForConfirmation(txId)
+
+Polls WoC for a Merkle proof on a transfer TX. Uses 60-second intervals (after an initial 1-second delay managed by the UI layer), up to 60 attempts. Unlike `pollForProof`, this does **not** modify proof chains -- it only checks whether the TX has been mined. Returns `true` once confirmed. Used by the auto-confirmation system to automatically transition tokens from `pending_transfer` to `transferred`.
+
+#### fetchFileFromGenesis(genesisTxId, expectedHash)
+
+Fetches the full genesis TX, scans outputs for an MPT-FILE OP_RETURN, extracts the file data, and verifies `SHA-256(bytes) === expectedHash`. Returns `{ mimeType, fileName, bytes }` or `null` if not found or hash mismatch.
+
 #### fetchMissingProofs()
 
 Scans all stored tokens for missing proof chains and attempts to fetch them. Handles tokens that were minted or received but the page was closed before confirmation.
@@ -598,11 +673,13 @@ Scans all stored tokens for missing proof chains and attempts to fetch them. Han
 
 ```
 size = TX_OVERHEAD (10) + numInputs * BYTES_PER_INPUT (148)
-     + sum(actual output script lengths + 9 bytes each)
+     + sum(8 bytes value + varint(scriptLen) + scriptLen per output)
      + BYTES_PER_P2PKH_OUTPUT (34) for the change output
 
 fee = ceil(size * feePerKb / 1000)
 ```
+
+The varint size for output scripts is computed correctly for large scripts (e.g. embedded file OP_RETURNs): 1 byte for lengths < 253, 3 bytes for < 65536, 5 bytes for larger.
 
 Default fee rate: 150 sats/KB.
 
@@ -625,9 +702,9 @@ Default fee rate: 150 sats/KB.
 |---------|---------|
 | Wallet | Address, public key, WIF, balance. Refresh, new wallet, restore from WIF. |
 | Send BSV | Plain satoshi transfer to an address. |
-| Mint Token | Create a new NFT with a name and optional attributes. |
-| My Tokens | List of all tokens with status badges. Check Incoming button. |
-| Transfer Token | Send a token to a recipient wallet address. |
+| Mint Token | Create a new NFT with name, optional attributes, and optional file embed. Per-field text/hex toggle. Supply, divisibility, restrictions, rules version. |
+| My Tokens | List of all tokens with status badges. Check Incoming button. View File for tokens with embedded files. |
+| Transfer Token | Send a token to a recipient wallet address. Auto-confirmation polling. |
 | Verify Token | SPV verification of a token's proof chain against block headers. |
 
 ### Token Card Display
@@ -637,13 +714,47 @@ Each token card shows:
 - Token ID, Current TXID, Output index
 - Satoshis, creation date, fee paid
 - Transfer TXID (if pending)
-- Action buttons: Select for Transfer, Verify, Confirm Sent, View TX links
+- Action buttons: Select for Transfer, Verify, View TX links
+- View File button (for tokens with 64-hex-char attributes indicating an embedded file hash)
+
+### File Embed (Mint Form)
+
+- File input allows selecting any file type
+- When a file is selected: shows filename and size, disables the text attributes input
+- Hard limit of 250KB enforced in the UI
+- The file's SHA-256 hash becomes the tokenAttributes; the file data is embedded in a second OP_RETURN output
+- After minting, the file is cached in IndexedDB for local retrieval
+- **MIME type inference**: Browsers may return an empty `file.type` for some extensions (e.g. `.md`, `.ts`, `.csv`). The wallet uses `inferMimeType(fileName, browserType)` which falls back to an extension-based lookup table when the browser provides no MIME type. This ensures correct display mode (inline text vs image vs download) when viewing the file later. Covered extensions include common text formats (`.md`, `.txt`, `.json`, `.csv`, `.xml`, `.html`, `.css`, `.js`, `.ts`), image formats (`.png`, `.jpg`, `.gif`, `.webp`, `.svg`, `.bmp`), and others (`.pdf`, `.zip`). Unrecognized extensions fall back to `application/octet-stream`.
+
+### File Viewer
+
+When "View File" is clicked on a token card:
+
+1. **IndexedDB cache check** -- returns instantly if cached
+2. **Genesis TX fetch** -- fetches the full genesis TX from WoC, scans for the MPT-FILE OP_RETURN, verifies the hash
+3. **Pruning recovery prompt** -- if the genesis TX is unavailable, prompts the user to upload the original file; computes SHA-256 and compares to the stored hash; caches on match
+
+Display modes:
+- Images (`image/*`): rendered inline as `<img>` with max-width constraint
+- Text files (`text/*`): displayed in a `<pre>` block
+- Other types: download link
+
+### Transfer Auto-Confirmation
+
+After a transfer is broadcast, the wallet automatically polls for on-chain confirmation:
+
+1. A 1-second delay after broadcast, then 60-second polling intervals
+2. Uses `pollForConfirmation()` which checks for a Merkle proof via the serialized fetch queue
+3. Once confirmed, automatically calls `confirmTransfer()` to mark the token as `transferred`
+4. Polling survives page refreshes: `resumePendingTransferPolls()` runs on page load, scanning all `pending_transfer` tokens and restarting their polls
+5. Deduplication via `activePollTxIds` Set prevents multiple polls for the same TX
 
 ### Background Operations (Page Load)
 
 - `refreshBalance()` -- fetch balance from WoC
 - `silentCheckIncoming()` -- scan for incoming tokens (no error display)
 - `fetchMissingProofs()` -- fetch proofs for unconfirmed tokens
+- `resumePendingTransferPolls()` -- restart confirmation polling for all `pending_transfer` tokens
 
 ---
 
@@ -670,6 +781,7 @@ Usage: `node serve.mjs` then open `http://localhost:3000`
 | `MIN_REQUEST_DELAY` | 200 | Milliseconds between WoC API calls |
 | `MPT_PREFIX` | `[0x4d, 0x50, 0x54]` | "MPT" in ASCII |
 | `MPT_VERSION` | `0x01` | Protocol version byte |
+| `MPT_FILE_MARKER` | `[0x4d, 0x50, 0x54, 0x2d, 0x46, 0x49, 0x4c, 0x45]` | "MPT-FILE" in ASCII, marks file OP_RETURN outputs |
 
 ---
 
@@ -680,3 +792,16 @@ Usage: `node serve.mjs` then open `http://localhost:3000`
 | `mpt:wallet:wif` | WIF string | Private key persistence |
 | `mpt:data:token:{tokenId}` | OwnedToken JSON | Token metadata |
 | `mpt:data:proof:{tokenId}` | ProofChain JSON | Merkle proof chain |
+
+## IndexedDB Schema (File Cache)
+
+Embedded file data is cached in IndexedDB (separate from localStorage) for larger storage capacity and binary data support.
+
+| Database | Object Store | Key | Fields |
+|----------|-------------|-----|--------|
+| `mpt-files` | `files` | `hash` (SHA-256 hex, keyPath) | `hash`, `mimeType`, `fileName`, `bytes` (Uint8Array) |
+
+The file cache serves three purposes:
+1. **Performance** -- avoids re-fetching the genesis TX every time the user views a file
+2. **Pruning recovery** -- if the genesis TX is pruned from the network, the local cache still has the file
+3. **Manual recovery** -- if both the network and cache are unavailable, the user can re-upload the original file, verified by SHA-256 hash match against tokenAttributes

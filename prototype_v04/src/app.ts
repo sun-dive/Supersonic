@@ -8,17 +8,19 @@
  *   - Ownership determined by P2PKH output, not OP_RETURN field
  *   - Address-based transfers (no public key exchange needed)
  */
-import { PrivateKey } from '@bsv/sdk'
+import { PrivateKey, Hash } from '@bsv/sdk'
 import { WalletProvider } from './walletProvider'
 import { TokenBuilder } from './tokenBuilder'
 import { TokenStore, LocalStorageBackend, OwnedToken } from './tokenStore'
 import { decodeTokenRules } from './opReturnCodec'
+import { FileCache } from './fileCache'
 
 // ─── Globals ────────────────────────────────────────────────────────
 
 let provider: WalletProvider
 let builder: TokenBuilder
 let store: TokenStore
+let fileCache: FileCache
 let fieldModes: Record<string, 'text' | 'hex'> = {
   name: 'text',
   attrs: 'text',
@@ -26,6 +28,22 @@ let fieldModes: Record<string, 'text' | 'hex'> = {
 }
 
 const WIF_KEY = 'mpt:wallet:wif'
+
+/** Infer MIME type from file extension when the browser returns an empty string. */
+function inferMimeType(fileName: string, browserType: string): string {
+  if (browserType) return browserType
+  const ext = fileName.split('.').pop()?.toLowerCase()
+  const map: Record<string, string> = {
+    txt: 'text/plain', md: 'text/markdown', json: 'text/json',
+    csv: 'text/csv', xml: 'text/xml', html: 'text/html', htm: 'text/html',
+    css: 'text/css', js: 'text/javascript', ts: 'text/typescript',
+    svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg',
+    jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    bmp: 'image/bmp', ico: 'image/x-icon',
+    pdf: 'application/pdf', zip: 'application/zip',
+  }
+  return (ext && map[ext]) || 'application/octet-stream'
+}
 
 // ─── Initialization ─────────────────────────────────────────────────
 
@@ -51,6 +69,7 @@ function init() {
   const storage = new LocalStorageBackend('mpt:data:')
   store = new TokenStore(storage)
   builder = new TokenBuilder(provider, store, key)
+  fileCache = new FileCache()
 
   setText('address', address)
   setText('pubkey', key.toPublicKey().toString())
@@ -68,10 +87,42 @@ function init() {
   on('btn-attrs-mode', () => toggleFieldMode('attrs'))
   on('btn-state-mode', () => toggleFieldMode('state'))
 
+  // File upload handlers
+  const fileInput = el('token-file') as HTMLInputElement
+  const clearBtn = el('btn-clear-file')
+  const fileInfo = el('file-info')
+  const attrsInput = el('token-attrs') as HTMLInputElement
+
+  if (fileInput) {
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files?.[0]
+      if (file) {
+        if (attrsInput) attrsInput.disabled = true
+        if (clearBtn) clearBtn.style.display = ''
+        if (fileInfo) {
+          fileInfo.style.display = ''
+          fileInfo.textContent = `File: ${file.name} (${inferMimeType(file.name, file.type)}, ${(file.size / 1024).toFixed(1)} KB)`
+          if (file.size > 250_000) {
+            fileInfo.textContent += ' — WARNING: Large file, high fee cost'
+          }
+        }
+      }
+    })
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (fileInput) fileInput.value = ''
+      if (attrsInput) attrsInput.disabled = false
+      clearBtn.style.display = 'none'
+      if (fileInfo) { fileInfo.style.display = 'none'; fileInfo.textContent = '' }
+    })
+  }
+
   refreshBalance()
   refreshTokenList()
   silentCheckIncoming()
   fetchMissingProofs()
+  resumePendingTransferPolls()
 }
 
 // ─── Actions ────────────────────────────────────────────────────────
@@ -93,6 +144,46 @@ async function fetchMissingProofs() {
     if (count > 0) {
       setText('incoming-status', `Updated ${count} proof chain(s)`)
       await refreshTokenList()
+    }
+  } catch {
+    // Silent
+  }
+}
+
+
+const activePollTxIds = new Set<string>()
+
+function pollTransferConfirmation(txId: string, tokenId: string) {
+  if (activePollTxIds.has(txId)) return
+  activePollTxIds.add(txId)
+
+  setTimeout(() => {
+    builder.pollForConfirmation(txId, (msg) => {
+      console.debug(`[transfer-poll] ${tokenId.slice(0, 12)}...: ${msg}`)
+    }).then(async (confirmed) => {
+      if (confirmed) {
+        try {
+          await builder.confirmTransfer(tokenId)
+          await refreshTokenList()
+        } catch (e: any) {
+          console.error(`[transfer-poll] confirmTransfer failed for ${tokenId}:`, e.message)
+        }
+      }
+    }).catch((e: any) => {
+      console.error(`[transfer-poll] poll error for ${txId}:`, e.message)
+    }).finally(() => {
+      activePollTxIds.delete(txId)
+    })
+  }, 1000)
+}
+
+async function resumePendingTransferPolls() {
+  try {
+    const tokens = await store.listTokens()
+    for (const t of tokens) {
+      if (t.status === 'pending_transfer' && t.transferTxId) {
+        pollTransferConfirmation(t.transferTxId, t.tokenId)
+      }
     }
   } catch {
     // Silent
@@ -169,7 +260,7 @@ function renderTokenCard(t: OwnedToken): string {
   const statusBadge = renderStatusBadge(t.status)
   const actions = renderTokenActions(t)
   const rules = renderRules(t.tokenRules)
-  const attrsDisplay = renderHexField(t.tokenAttributes)
+  const attrsDisplay = renderHexField(t.tokenAttributes, t)
   const stateDisplay = renderStateData(t.stateData)
   const supply = decodeTokenRules(t.tokenRules).supply
   const nftLabel = supply > 1 ? ` NFT #${t.genesisOutputIndex}` : ''
@@ -193,7 +284,7 @@ function renderTokenCard(t: OwnedToken): string {
 function renderTokenDetail(t: OwnedToken): string {
   const statusBadge = renderStatusBadge(t.status)
   const actions = renderTokenActions(t)
-  const attrsDisplay = renderHexField(t.tokenAttributes)
+  const attrsDisplay = renderHexField(t.tokenAttributes, t)
   const stateDisplay = renderStateData(t.stateData)
   const supply = decodeTokenRules(t.tokenRules).supply
   return `
@@ -248,8 +339,12 @@ function renderRules(rulesHex: string): string {
   return `Supply=${r.supply}, Divisibility=${r.divisibility}, Restrictions=0x${r.restrictions.toString(16).padStart(4, '0')}, Version=${r.version}`
 }
 
-function renderHexField(hex: string): string {
+function renderHexField(hex: string, token?: OwnedToken): string {
   if (!hex || hex === '00') return '<span class="muted">(none)</span>'
+  // 64 hex chars = 32 bytes = possible SHA-256 file hash
+  if (hex.length === 64 && token) {
+    return `<code class="muted">${escHtml(hex)}</code> <button onclick="window._viewFile('${token.genesisTxId}', '${hex}')" style="font-size:0.8em; padding:2px 8px; background:#30363d;">View File</button>`
+  }
   try {
     const bytes = new Uint8Array(hex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
     const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -346,21 +441,49 @@ async function handleMint() {
     stateData = fieldModes.state === 'text' ? textToHex(stateRaw) : stateRaw
   }
 
+  // Read file if one was selected
+  const fileInput = el('token-file') as HTMLInputElement
+  const selectedFile = fileInput?.files?.[0]
+  let fileData: { bytes: Uint8Array; mimeType: string; fileName: string } | undefined
+
+  if (selectedFile) {
+    if (selectedFile.size > 250_000) {
+      setResult('mint-result', 'File too large. Max ~250KB for on-chain storage.')
+      return
+    }
+    const arrayBuf = await selectedFile.arrayBuffer()
+    fileData = {
+      bytes: new Uint8Array(arrayBuf),
+      mimeType: inferMimeType(selectedFile.name, selectedFile.type),
+      fileName: selectedFile.name,
+    }
+  }
+
   const feeRate = parseInt(inputVal('fee-rate'), 10)
   if (feeRate > 0) builder.feePerKb = feeRate
 
-  setResult('mint-result', 'Building genesis transaction...')
+  setResult('mint-result', fileData
+    ? `Building genesis transaction with file (${(fileData.bytes.length / 1024).toFixed(1)} KB)...`
+    : 'Building genesis transaction...')
 
   try {
     const result = await builder.createGenesis({
       tokenName: name,
-      attributes: attrs,
+      attributes: fileData ? undefined : attrs,
       supply,
       divisibility,
       restrictions,
       rulesVersion,
       stateData,
+      fileData,
     })
+
+    // Cache file locally for pruning recovery
+    if (fileData) {
+      const hashBytes = Hash.sha256(Array.from(fileData.bytes))
+      const hash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+      await fileCache.store(hash, fileData)
+    }
 
     const count = result.tokenIds.length
     const idSummary = count === 1
@@ -422,6 +545,9 @@ async function handleTransfer() {
 
     await refreshTokenList()
     await refreshBalance()
+
+    // Poll for on-chain confirmation, then auto-confirm transfer
+    pollTransferConfirmation(result.txId, result.tokenId)
 
   } catch (e: any) {
     setResult('transfer-result', `Error: ${e.message}`)
@@ -519,6 +645,87 @@ function handleRestoreWallet() {
   } catch (e: any) {
     alert(`Error: ${e.message}`)
   }
+}
+
+;(window as any)._viewFile = async (genesisTxId: string, hash: string) => {
+  // 1. Check local IndexedDB cache
+  let file = await fileCache.get(hash)
+
+  // 2. Fetch from genesis TX
+  if (!file) {
+    try {
+      const fetched = await builder.fetchFileFromGenesis(genesisTxId, hash)
+      if (fetched) {
+        file = { hash, ...fetched }
+        await fileCache.store(hash, fetched)
+      }
+    } catch (e: any) {
+      console.debug('fetchFileFromGenesis failed:', e.message)
+    }
+  }
+
+  // 3. Pruning recovery: prompt user to provide original file
+  if (!file) {
+    promptFileRecovery(hash)
+    return
+  }
+
+  displayFile(file)
+}
+
+function displayFile(file: { mimeType: string; fileName: string; bytes: Uint8Array }) {
+  const blob = new Blob([file.bytes.buffer as ArrayBuffer], { type: file.mimeType })
+  const url = URL.createObjectURL(blob)
+
+  if (file.mimeType.startsWith('image/')) {
+    const win = window.open('', '_blank')
+    if (win) {
+      win.document.write(`<html><head><title>${file.fileName}</title></head><body style="margin:0;background:#111;display:flex;justify-content:center;align-items:center;min-height:100vh;"><img src="${url}" style="max-width:100%;max-height:100vh;" /></body></html>`)
+    }
+  } else if (file.mimeType.startsWith('text/')) {
+    const text = new TextDecoder().decode(file.bytes)
+    const win = window.open('', '_blank')
+    if (win) {
+      win.document.write(`<html><head><title>${file.fileName}</title></head><body style="margin:20px;background:#0d1117;color:#c9d1d9;font-family:monospace;"><pre>${text.replace(/</g, '&lt;')}</pre></body></html>`)
+    }
+  } else {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.fileName
+    a.click()
+  }
+}
+
+function promptFileRecovery(expectedHash: string) {
+  const msg = 'Genesis TX unavailable (possibly pruned). Upload the original file to verify and restore.'
+  if (!confirm(msg)) return
+
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+
+    const arrayBuf = await file.arrayBuffer()
+    const bytes = new Uint8Array(arrayBuf)
+    const hashBytes = Hash.sha256(Array.from(bytes))
+    const computedHash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+
+    if (computedHash !== expectedHash) {
+      alert('Hash mismatch. This is not the original file embedded in this NFT.')
+      return
+    }
+
+    const fileData = {
+      mimeType: file.type || 'application/octet-stream',
+      fileName: file.name,
+      bytes,
+    }
+
+    await fileCache.store(expectedHash, fileData)
+    displayFile(fileData)
+  }
+  input.click()
 }
 
 // ─── DOM Helpers ────────────────────────────────────────────────────

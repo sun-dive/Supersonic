@@ -11,7 +11,7 @@
  *   Wallet layer (this file + walletProvider) depends on token protocol.
  *   Token protocol NEVER depends on wallet layer.
  */
-import { PrivateKey, Transaction, P2PKH, LockingScript } from '@bsv/sdk'
+import { PrivateKey, Transaction, P2PKH, LockingScript, Hash } from '@bsv/sdk'
 import { WalletProvider, Utxo } from './walletProvider'
 import { TokenStore, OwnedToken } from './tokenStore'
 import {
@@ -28,6 +28,9 @@ import {
   TokenOpReturnData,
   encodeTokenRules,
   buildImmutableChunkBytes,
+  buildFileOpReturn,
+  parseFileOpReturn,
+  FileOpReturnData,
 } from './opReturnCodec'
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -40,6 +43,11 @@ export interface GenesisParams {
   restrictions?: number    // default 0
   rulesVersion?: number    // default 1
   stateData?: string       // hex (default '')
+  fileData?: {             // optional file to embed in genesis TX
+    bytes: Uint8Array
+    mimeType: string
+    fileName: string
+  }
 }
 
 export interface GenesisResult {
@@ -220,7 +228,21 @@ export class TokenBuilder {
       params.restrictions ?? 0,
       params.rulesVersion ?? 1,
     )
-    const attrsHex = params.attributes ?? '00'
+    let attrsHex: string
+    let fileOpReturn: LockingScript | null = null
+
+    if (params.fileData) {
+      const hashBytes = Hash.sha256(Array.from(params.fileData.bytes))
+      attrsHex = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+      fileOpReturn = buildFileOpReturn({
+        mimeType: params.fileData.mimeType,
+        fileName: params.fileData.fileName,
+        bytes: params.fileData.bytes,
+      })
+    } else {
+      attrsHex = params.attributes ?? '00'
+    }
+
     const stateData = params.stateData ?? ''
     const opReturnData: TokenOpReturnData = {
       tokenName: params.tokenName,
@@ -243,6 +265,13 @@ export class TokenBuilder {
           t.addOutput({
             lockingScript: new P2PKH().lock(address),
             satoshis: TOKEN_SATS,
+          })
+        }
+        // Optional: file data OP_RETURN (genesis only)
+        if (fileOpReturn) {
+          t.addOutput({
+            lockingScript: fileOpReturn,
+            satoshis: 0,
           })
         }
       },
@@ -349,6 +378,30 @@ export class TokenBuilder {
     await this.store.updateToken(token)
   }
 
+
+  // ── File Retrieval from Genesis TX ──────────────────────────
+
+  async fetchFileFromGenesis(genesisTxId: string, expectedHash: string): Promise<FileOpReturnData | null> {
+    const tx = await this.provider.getSourceTransaction(genesisTxId)
+
+    for (let i = 0; i < tx.outputs.length; i++) {
+      const output = tx.outputs[i]
+      if (!output.lockingScript) continue
+
+      const file = parseFileOpReturn(output.lockingScript as LockingScript)
+      if (!file) continue
+
+      // Verify hash matches
+      const hashBytes = Hash.sha256(Array.from(file.bytes))
+      const computedHash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+      if (computedHash !== expectedHash) continue
+
+      return file
+    }
+
+    return null
+  }
+
   // ── Send BSV ──────────────────────────────────────────────────
 
   async sendSats(recipientAddress: string, amount: number): Promise<{ txId: string; fee: number }> {
@@ -368,6 +421,34 @@ export class TokenBuilder {
 
     await this.provider.broadcast(rawHex)
     return { txId, fee }
+  }
+
+  // ── Transfer Confirmation Polling ────────────────────────────
+
+  async pollForConfirmation(
+    txId: string,
+    onStatus?: (msg: string) => void,
+    maxAttempts = 60,
+    intervalMs = 60000,
+  ): Promise<boolean> {
+    for (let i = 0; i < maxAttempts; i++) {
+      onStatus?.(`Waiting for confirmation... (attempt ${i + 1}/${maxAttempts})`)
+
+      try {
+        const proof = await this.provider.getMerkleProof(txId)
+        if (proof) {
+          onStatus?.('Transaction confirmed!')
+          return true
+        }
+      } catch {
+        // Not confirmed yet
+      }
+
+      await new Promise(r => setTimeout(r, intervalMs))
+    }
+
+    onStatus?.('Timed out waiting for confirmation.')
+    return false
   }
 
   // ── Proof Polling ─────────────────────────────────────────────
@@ -834,7 +915,8 @@ function estimateFee(
 
   for (const o of existingOutputs) {
     const scriptLen = o.lockingScript?.toBinary()?.length ?? 25
-    size += 8 + 1 + scriptLen
+    const varintLen = scriptLen < 0xfd ? 1 : scriptLen < 0x10000 ? 3 : 5
+    size += 8 + varintLen + scriptLen
   }
 
   size += BYTES_PER_P2PKH_OUTPUT
