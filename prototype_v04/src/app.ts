@@ -263,6 +263,14 @@ async function refreshTokenList() {
   }).join('')
 }
 
+/** Map a 1-based fragment index to its NFT number and piece number within that NFT. */
+function fragmentLabel(index: number, fragsPerWhole: number, wholeTokens: number): string {
+  const nftNum = Math.ceil(index / fragsPerWhole)
+  const pieceNum = ((index - 1) % fragsPerWhole) + 1
+  if (wholeTokens === 1) return `Piece ${pieceNum}/${fragsPerWhole}`
+  return `NFT ${nftNum}, piece ${pieceNum}/${fragsPerWhole}`
+}
+
 function renderFragmentCard(genesisTxId: string, group: OwnedToken[], rules: { supply: number; divisibility: number; restrictions: number; version: number }): string {
   const first = group[0]
   // Divisibility = fragments per whole token. Total fragments = supply * divisibility.
@@ -296,25 +304,32 @@ function renderFragmentCard(genesisTxId: string, group: OwnedToken[], rules: { s
   const barColor = pct === 100 ? '#238636' : pct > 0 ? '#d29922' : '#da3633'
   const completionBar = `<div style="background:#21262d;border-radius:3px;height:8px;margin:6px 0;overflow:hidden;"><div style="background:${barColor};height:100%;width:${pct}%;transition:width 0.3s;"></div></div>`
 
-  // Fragment list helper: compress consecutive ranges like 1-5, 8, 10-12
+  // Fragment list helper: group by NFT and show piece numbers
   const compressRanges = (indices: number[]): string => {
     if (indices.length === 0) return '(none)'
-    if (indices.length > 40) {
-      // Too many to list individually — show count + first/last
-      return `${indices.length} pieces (#${indices[0]}-#${indices[indices.length - 1]})`
+    if (indices.length > 60) {
+      return `${indices.length} pieces`
     }
-    const ranges: string[] = []
-    let start = indices[0], end = indices[0]
-    for (let i = 1; i < indices.length; i++) {
-      if (indices[i] === end + 1) {
-        end = indices[i]
+    if (wholeTokens === 1) {
+      // Single NFT: just list piece numbers
+      return indices.map(i => `piece ${((i - 1) % fragsPerWhole) + 1}`).join(', ')
+    }
+    // Multi-NFT: group by NFT number
+    const byNft = new Map<number, number[]>()
+    for (const i of indices) {
+      const nftNum = Math.ceil(i / fragsPerWhole)
+      if (!byNft.has(nftNum)) byNft.set(nftNum, [])
+      byNft.get(nftNum)!.push(((i - 1) % fragsPerWhole) + 1)
+    }
+    const parts: string[] = []
+    for (const [nftNum, pieces] of byNft) {
+      if (pieces.length === fragsPerWhole) {
+        parts.push(`NFT ${nftNum} (complete)`)
       } else {
-        ranges.push(start === end ? `#${start}` : `#${start}-#${end}`)
-        start = end = indices[i]
+        parts.push(`NFT ${nftNum}: ${pieces.map(p => `${p}/${fragsPerWhole}`).join(', ')}`)
       }
     }
-    ranges.push(start === end ? `#${start}` : `#${start}-#${end}`)
-    return ranges.join(', ')
+    return parts.join(' | ')
   }
 
   return `
@@ -322,7 +337,7 @@ function renderFragmentCard(genesisTxId: string, group: OwnedToken[], rules: { s
       <div class="token-header">${escHtml(first.tokenName)} <span class="badge ${pct === 100 ? 'badge-active' : 'badge-pending'}">${heldDisplay} / ${wholeTokens} whole</span></div>
       <div class="token-field"><span class="label">Genesis TXID:</span> <code class="selectable">${genesisTxId}</code></div>
       <div class="token-field"><span class="label">Type:</span> Divisible token (${wholeTokens} tokens × ${fragsPerWhole} fragments = ${totalFragments} total pieces)</div>
-      <div class="token-field"><span class="label">Completion:</span> ${heldCount}/${totalFragments} fragments (${pct}%)</div>
+      <div class="token-field"><span class="label">Completion:</span> ${heldCount}/${totalFragments} pieces (${heldWholes} complete NFT${heldWholes !== 1 ? 's' : ''}${heldRemainder > 0 ? ` + ${heldRemainder}/${fragsPerWhole} pieces` : ''}) ${pct}%</div>
       ${completionBar}
       <div class="token-field"><span class="label">Held:</span> <span style="color:#3fb950;">${compressRanges(heldIndices)}</span></div>
       ${missingIndices.length > 0 ? `<div class="token-field"><span class="label">Missing:</span> <span class="muted">${compressRanges(missingIndices)}</span></div>` : ''}
@@ -346,7 +361,7 @@ function renderFragmentCard(genesisTxId: string, group: OwnedToken[], rules: { s
       <details style="margin-top:8px;" ontoggle="if(this.open){var s=document.getElementById('fsel-${genKey}');if(s){var i=document.getElementById('transfer-token-id');if(i){var o=s.querySelector('option:not([data-pending])');if(o)i.value=o.value;}}}"><summary class="muted" style="cursor:pointer;font-size:0.85em;">Show individual fragment details</summary>
         <div style="margin-top:6px;">
           <select id="fsel-${genKey}" onchange="window._selectGroupToken('fdet-${genKey}', this.value)" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:4px 8px;border-radius:4px;width:100%;margin-bottom:6px;">
-            ${group.map(t => `<option value="${t.tokenId}"${t.status !== 'active' ? ' data-pending' : ''}>Fragment #${t.genesisOutputIndex} ${t.status !== 'active' ? '- ' + t.status : ''}</option>`).join('')}
+            ${group.map(t => `<option value="${t.tokenId}"${t.status !== 'active' ? ' data-pending' : ''}>Fragment #${t.genesisOutputIndex} (${fragmentLabel(t.genesisOutputIndex, fragsPerWhole, wholeTokens)}) ${t.status !== 'active' ? '- ' + t.status : ''}</option>`).join('')}
           </select>
           <div id="fdet-${genKey}">${renderTokenDetail(first)}</div>
         </div>
@@ -364,10 +379,10 @@ function renderTokenCard(t: OwnedToken): string {
   const isFragment = r.divisibility > 0 && r.supply > 0
   const totalFragments = isFragment ? r.supply * r.divisibility : r.supply
   const nftLabel = isFragment
-    ? ` Fragment #${t.genesisOutputIndex}`
+    ? ` Fragment #${t.genesisOutputIndex} (${fragmentLabel(t.genesisOutputIndex, r.divisibility, r.supply)})`
     : (r.supply > 1 ? ` NFT #${t.genesisOutputIndex}` : '')
   const fragmentInfo = isFragment
-    ? `<div class="token-field"><span class="label">Fragment:</span> #${t.genesisOutputIndex} of ${totalFragments} (${r.divisibility} fragments = 1 whole, ${r.supply} whole tokens)</div>`
+    ? `<div class="token-field"><span class="label">Fragment:</span> ${fragmentLabel(t.genesisOutputIndex, r.divisibility, r.supply)} -- piece #${t.genesisOutputIndex} of ${totalFragments} total</div>`
     : ''
   return `
     <div class="token-card ${t.status === 'transferred' ? 'token-transferred' : ''} ${t.status === 'pending_transfer' ? 'token-pending' : ''}">
@@ -392,11 +407,15 @@ function renderTokenDetail(t: OwnedToken): string {
   const actions = renderTokenActions(t)
   const attrsDisplay = renderHexField(t.tokenAttributes, t)
   const stateDisplay = renderStateData(t.stateData)
-  const supply = decodeTokenRules(t.tokenRules).supply
+  const r = decodeTokenRules(t.tokenRules)
+  const isFragment = r.divisibility > 0 && r.supply > 0
+  const fragLine = isFragment
+    ? `<div class="token-field"><span class="label">Fragment:</span> ${fragmentLabel(t.genesisOutputIndex, r.divisibility, r.supply)}</div>`
+    : (r.supply > 1 ? `<div class="token-field"><span class="label">NFT #:</span> ${t.genesisOutputIndex}</div>` : '')
   return `
     <div class="${t.status === 'transferred' ? 'token-transferred' : ''} ${t.status === 'pending_transfer' ? 'token-pending' : ''}">
       <div class="token-field"><span class="label">Status:</span> ${statusBadge}</div>
-      ${supply > 1 ? `<div class="token-field"><span class="label">NFT #:</span> ${t.genesisOutputIndex}</div>` : ''}
+      ${fragLine}
       <div class="token-field"><span class="label">Token ID:</span> <code class="selectable">${t.tokenId}</code></div>
       <div class="token-field"><span class="label">Attributes:</span> ${attrsDisplay}</div>
       <div class="token-field"><span class="label">State Data:</span> ${stateDisplay}</div>
@@ -425,7 +444,7 @@ function renderTokenActions(t: OwnedToken): string {
   if (t.status === 'active') {
     parts.push(`<button onclick="window._selectForTransfer('${t.tokenId}')">Select for Transfer</button>`)
     if (isFragment) {
-      parts.push(`<button onclick="window._sendSingleFragment('${t.tokenId}', ${t.genesisOutputIndex})">Send Fragment #${t.genesisOutputIndex}</button>`)
+      parts.push(`<button onclick="window._sendSingleFragment('${t.tokenId}', ${t.genesisOutputIndex})">Send ${fragmentLabel(t.genesisOutputIndex, r.divisibility, r.supply)}</button>`)
     }
     parts.push(`<button onclick="window._verifyToken('${t.tokenId}')">Verify</button>`)
   }
