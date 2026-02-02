@@ -1,4 +1,8 @@
-# MPT Prototype v04 -- Structure and Function
+# Merkle Proof Token (MPT) Prototype v04 -- Structure and Function
+
+Imagined and designed by Metro Gnome
+Built by Metro and a team of Claudes
+Febraury 1st, 2026
 
 ## Overview
 
@@ -123,12 +127,13 @@ The OP_RETURN contains these fields as separate pushdata chunks:
 | 7 | stateData | variable | Mutable application state (min 1 byte) |
 | 8 | genesisTxId | 32B | *Transfer only:* raw genesis TX hash |
 | 9 | proofChainBinary | variable | *Transfer only:* compact binary proof chain |
+| 10 | genesisOutputIndex | 4B | *Transfer only:* uint32 LE, the token's P2PKH output index in the genesis TX |
 
-**Genesis TX OP_RETURN:** Chunks 0-7 (8 chunks). No genesisTxId (chunk 8) or proofChainBinary (chunk 9) -- not needed at mint time. When a file is embedded, a separate OP_RETURN output with the `MPT-FILE` marker is added to the genesis TX (see Embedded File Data).
+**Genesis TX OP_RETURN:** Chunks 0-7 (8 chunks). No genesisTxId (chunk 8), proofChainBinary (chunk 9), or genesisOutputIndex (chunk 10) -- not needed at mint time. When a file is embedded, a separate OP_RETURN output with the `MPT-FILE` marker is added to the genesis TX (see Embedded File Data).
 
-**Transfer TX OP_RETURN:** Chunks 0-9 (10 chunks). genesisTxId and proofChainBinary carry the token's verifiable history. Ownership is determined by the P2PKH output, not by any OP_RETURN field. No file data is included -- only the 32-byte hash in tokenAttributes.
+**Transfer TX OP_RETURN:** Chunks 0-10 (11 chunks). genesisTxId, proofChainBinary, and genesisOutputIndex carry the token's verifiable history and identity. Ownership is determined by the P2PKH output, not by any OP_RETURN field. No file data is included -- only the 32-byte hash in tokenAttributes.
 
-**Parsing rule:** The chunk count distinguishes genesis from transfer: 8 chunks = genesis, 10 chunks = transfer. stateData (chunk 7) is always present with a minimum of 1 byte to ensure consistent chunk counts.
+**Parsing rule:** The chunk count distinguishes genesis from transfer: 8 chunks = genesis, 11 chunks = transfer. stateData (chunk 7) is always present with a minimum of 1 byte to ensure consistent chunk counts.
 
 ### What Changes Between Transfers
 
@@ -400,14 +405,15 @@ Chunk 6:  tokenAttributes  (variable hex)
 Chunk 7:  stateData        (variable hex, minimum 1 byte)
 ```
 
-Transfer TXs append two additional chunks:
+Transfer TXs append three additional chunks:
 
 ```
-Chunk 8:  genesisTxId      (32 bytes, raw hash)
-Chunk 9:  proofChainBinary (compact binary encoding)
+Chunk 8:  genesisTxId        (32 bytes, raw hash)
+Chunk 9:  proofChainBinary   (compact binary encoding)
+Chunk 10: genesisOutputIndex (4 bytes, uint32 LE -- the token's P2PKH output index in the genesis TX)
 ```
 
-Genesis OP_RETURN = 8 chunks (0-7). Transfer OP_RETURN = 10 chunks (0-9). The parser uses chunk count to distinguish them. `stateData` (chunk 7) must always be at least 1 byte to keep the count unambiguous.
+Genesis OP_RETURN = 8 chunks (0-7). Transfer OP_RETURN = 11 chunks (0-10). The parser uses chunk count to distinguish them. `stateData` (chunk 7) must always be at least 1 byte to keep the count unambiguous.
 
 ### Token Rules (8 bytes)
 
@@ -528,7 +534,7 @@ All network operations are isolated in the WalletProvider class. It communicates
 
 ### Rate Limiting
 
-A 200ms minimum delay between API requests prevents HTTP 429 errors. Implemented via `throttledFetch()`.
+A 350ms minimum delay between API requests prevents HTTP 429 errors. All requests are serialized through a single `queuedFetch()` Promise chain -- no concurrent requests are possible. `fetchWithRetry()` wraps `queuedFetch()` to automatically retry on HTTP 429 responses with exponential backoff (500ms, 1000ms, 1500ms, up to 3 retries).
 
 ### TX Cache
 
@@ -614,8 +620,8 @@ Orchestrates all token operations. Coordinates between the wallet provider, toke
 4. Construct TX: funding input -> OP_RETURN + token output(s) (1 sat each) + [MPT-FILE OP_RETURN if file] + change
 5. Sign and broadcast
 6. Compute token ID from TX hash
-7. Store token with empty proof chain
-8. Return `{ txId, tokenId }`
+7. Store each token with empty proof chain (one per supply unit)
+8. Return `{ txId, tokenIds }` (array of token IDs, one per supply unit)
 
 #### createTransfer(tokenId, recipientAddress)
 
@@ -778,7 +784,7 @@ Usage: `node serve.mjs` then open `http://localhost:3000`
 | `BYTES_PER_INPUT` | 148 | P2PKH input with signature |
 | `BYTES_PER_P2PKH_OUTPUT` | 34 | P2PKH output (value + script) |
 | `TX_OVERHEAD` | 10 | Version + locktime + varint |
-| `MIN_REQUEST_DELAY` | 200 | Milliseconds between WoC API calls |
+| `MIN_REQUEST_DELAY` | 350 | Milliseconds between WoC API calls |
 | `MPT_PREFIX` | `[0x4d, 0x50, 0x54]` | "MPT" in ASCII |
 | `MPT_VERSION` | `0x01` | Protocol version byte |
 | `MPT_FILE_MARKER` | `[0x4d, 0x50, 0x54, 0x2d, 0x46, 0x49, 0x4c, 0x45]` | "MPT-FILE" in ASCII, marks file OP_RETURN outputs |
