@@ -163,13 +163,15 @@ export function encodeOpReturn(data: TokenOpReturnData): LockingScript {
   const chunks: ScriptChunk[] = [
     { op: OP.OP_0 },
     { op: OP.OP_RETURN },
-    pushData(MPT_PREFIX),                                   // chunk 0: "MPT"
-    pushData([MPT_VERSION]),                                // chunk 1: version (0x02)
-    pushData(nameBytes),                                    // chunk 2: tokenName
-    pushData(scriptBytes.length > 0 ? scriptBytes : []),    // chunk 3: tokenScript (consensus)
-    pushData(rulesBytes),                                   // chunk 4: tokenRules (application)
-    pushData(attrsBytes.length > 0 ? attrsBytes : []),      // chunk 5: tokenAttributes (user)
-    pushData(stateBytes.length > 0 ? stateBytes : [0x00]),  // chunk 6: stateData (mutable)
+    // Indices below are in the encoder's LockingScript array (includes OP_0, OP_RETURN at [0],[1])
+    // After parsePushdataChunks, data chunks shift down (OP_0, OP_RETURN skipped): [2]→[0], [3]→[1], etc.
+    pushData(MPT_PREFIX),                                   // [2] in encoder → [0] in parser: "MPT"
+    pushData([MPT_VERSION]),                                // [3] in encoder → [1] in parser: version (0x02)
+    pushData(nameBytes),                                    // [4] in encoder → [2] in parser: tokenName
+    pushData(scriptBytes.length > 0 ? scriptBytes : []),    // [5] in encoder → [3] in parser: tokenScript (consensus)
+    pushData(rulesBytes),                                   // [6] in encoder → [4] in parser: tokenRules (application)
+    pushData(attrsBytes.length > 0 ? attrsBytes : []),      // [7] in encoder → [5] in parser: tokenAttributes (user)
+    pushData(stateBytes.length > 0 ? stateBytes : [0x00]),  // [8] in encoder → [6] in parser: stateData (mutable)
   ]
 
   // Optional on-chain bundle fields (transfer TXs only)
@@ -276,9 +278,12 @@ export function decodeOpReturn(script: LockingScript): TokenOpReturnData | null 
     stateData,
   }
 
-  // Optional on-chain bundle fields (chunks 7, 8, 9 -- transfer TXs only)
-  // Note: parsePushdataChunks returns only data chunks, skipping OP_0 and OP_RETURN
-  // So indices are offset by 2 from the encoder's LockingScript array
+  // Optional on-chain bundle fields (transfer TXs only)
+  // These are parsed from the data chunks returned by parsePushdataChunks:
+  //   chunks[7] = genesisTxId (32 bytes)
+  //   chunks[8] = proofChainBinary (variable length, decodes to MerkleProofEntry[])
+  //   chunks[9] = genesisOutputIndex (4 bytes LE uint32)
+  // Note: parsePushdataChunks skips OP_0 and OP_RETURN, returning only data chunks
   if (chunks.length >= 10) {
     result.genesisTxId = bytesToHex(chunks[7])
     result.proofChainEntries = decodeProofChainBinary(chunks[8])

@@ -248,8 +248,9 @@ export class TokenBuilder {
     // Determine genesis info
     const isTransfer = opData.genesisTxId != null
     const genesisTxId = opData.genesisTxId ?? u.txId
-    // Genesis TX: P2PKH starts at output 1 (OP_RETURN is output 0)
-    // Transfer TX: genesisOutputIndex decoded from on-chain bundle (defaults to 1)
+    // Genesis TX: P2PKH output indices define fragment positions (1-indexed from genesis TX)
+    // Transfer TX: genesisOutputIndex MUST be extracted from OP_RETURN (via opData)
+    // to preserve which fragment this is (cannot derive from p2pkhOutputIndex, which is always 0)
     const genesisOutputIndex = isTransfer ? (opData.genesisOutputIndex ?? 1) : p2pkhOutputIndex
 
     const immutableBytes = buildImmutableChunkBytes(
@@ -334,8 +335,9 @@ export class TokenBuilder {
 
     const supply = params.supply ?? 1
     const divisibility = params.divisibility ?? 0
-    // Divisible tokens: mint supply * divisibility fragment outputs
-    // Non-divisible: mint supply outputs (one per token)
+    // Fragment distribution in genesis TX outputs:
+    // - supply=4, divisibility=2: 8 P2PKH outputs (4 tokens × 2 fragments each)
+    // - supply=4, divisibility=0: 4 P2PKH outputs (4 indivisible tokens, one per output)
     const totalOutputs = divisibility > 0 ? supply * divisibility : supply
 
     const { rawHex, txId, fee } = await this.buildFundedTx(
@@ -427,7 +429,7 @@ export class TokenBuilder {
     const { rawHex, txId, fee } = await this.buildFundedTransferTx(
       tokenSourceTx, token.currentOutputIndex,
       fundingCandidates, this.myAddress, (tx) => {
-        // v05: Output 0 = P2PKH (recipient), Output 1 = OP_RETURN
+        // Transfer TX structure: Output 0 = P2PKH (recipient), Output 1 = OP_RETURN
         tx.addOutput({
           lockingScript: new P2PKH().lock(recipientAddress),
           satoshis: TOKEN_SATS,
