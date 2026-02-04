@@ -521,6 +521,7 @@ export class TokenBuilder {
     tokenId: string,
     recipientAddress: string,
     amount: number,
+    newStateData?: string,
   ): Promise<FungibleTransferResult> {
     const token = await this.store.getFungibleToken(tokenId)
     if (!token) throw new Error(`Fungible token not found: ${tokenId}`)
@@ -565,12 +566,15 @@ export class TokenBuilder {
     // Get proof chain for OP_RETURN
     const proofChain = await this.store.getProofChain(tokenId)
 
+    // Use new state data if provided, otherwise keep existing
+    const effectiveStateData = newStateData !== undefined ? newStateData : token.stateData
+
     const opReturnData: TokenOpReturnData = {
       tokenName: token.tokenName,
       tokenScript: token.tokenScript,
       tokenRules: token.tokenRules,
       tokenAttributes: token.tokenAttributes,
-      stateData: token.stateData,
+      stateData: effectiveStateData,
       genesisTxId: token.genesisTxId,
       proofChainEntries: proofChain?.entries ?? [],
       genesisOutputIndex: 1,  // Fixed for fungible tokens
@@ -601,6 +605,11 @@ export class TokenBuilder {
         satoshis: change,
         status: 'active',
       })
+    }
+
+    // Update state data if new value was provided
+    if (newStateData !== undefined) {
+      token.stateData = newStateData
     }
 
     await this.store.updateFungibleToken(token)
