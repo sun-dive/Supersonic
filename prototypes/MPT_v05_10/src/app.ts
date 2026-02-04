@@ -993,16 +993,22 @@ function handleRestoreWallet() {
 }
 
 ;(window as any)._transferFungible = async (tokenId: string, genKey: string) => {
+  // Populate Token ID field for visibility
+  const tokenIdInput = el('transfer-token-id') as HTMLInputElement
+  if (tokenIdInput) tokenIdInput.value = tokenId
+
   const amtInput = el(`fungible-send-${genKey}`) as HTMLInputElement
   const amount = parseInt(amtInput?.value ?? '0', 10)
   if (!amount || amount < 1) {
     setResult('transfer-result', 'Enter a valid amount (minimum 1 sat).')
+    el('transfer-section')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     return
   }
 
   const recipient = inputVal('transfer-recipient')
   if (!recipient) {
     setResult('transfer-result', 'Enter a recipient BSV address in the Transfer Token section below.')
+    el('transfer-section')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     el('transfer-recipient')?.focus()
     return
   }
