@@ -25,10 +25,10 @@ An MPT token is a BSV transaction with a specific output structure. Ownership us
 All immutable fields are cryptographically bound to the Token ID. Tampering with any of them causes a Token ID mismatch -- instant verification failure. No additional checking logic needed for these fields; the existing `computeTokenId` check catches it.
 
 **[Token ID]**
-- `SHA-256(genesisTxId || outputIndex LE || opReturnChunks[2..5] raw bytes)`
+- `SHA-256(genesisTxId || outputIndex LE || immutableChunkBytes)` where `immutableChunkBytes = tokenName + tokenScript + tokenRules + tokenAttributes`
 - Deterministic, purely local computation. No network access required.
 - `outputIndex` is the actual Bitcoin output index of the token's P2PKH in the genesis TX. Since Output 0 is the OP_RETURN, token indices start at 1. Single mint = 1, batch mint = 1..N.
-- `opReturnChunks[2..5]` binds the shared collection identity (name, script, rules, attributes).
+- `immutableChunkBytes` binds the shared collection identity (name, script, rules, attributes). Tampering with any of these fields causes a Token ID mismatch.
 
 **[Token Name]**
 - UTF-8 text string.
@@ -195,16 +195,18 @@ The zero-dependency parsing aligns with MPT's SPV-only philosophy. The protocol 
 ### Token ID
 
 ```
-Token ID = SHA-256(genesisTxId || outputIndex LE || opReturnChunks[2..5] raw bytes)
+Token ID = SHA-256(genesisTxId || outputIndex LE || immutableChunkBytes)
 ```
 
-The Token ID is a deterministic, purely local computation. It binds the token's identity to its genesis transaction and all immutable metadata (tokenName, tokenScript, tokenRules, tokenAttributes). No network access is required to compute or verify it. Tampering with any immutable field -- including the consensus script -- causes a Token ID mismatch, instant verification failure.
+where `immutableChunkBytes = tokenName + tokenScript + tokenRules + tokenAttributes` (concatenated raw bytes of all immutable fields)
+
+The Token ID is a deterministic, purely local computation. It binds the token's identity to its genesis transaction and all immutable metadata. No network access is required to compute or verify it. Tampering with any immutable field -- including the consensus script -- causes a Token ID mismatch, instant verification failure.
 
 ### Verification Model
 
 Token validity is proven exclusively through Merkle proofs and block headers:
 
-1. Token ID matches `SHA-256(genesisTxId || outputIndex LE || opReturnChunks[2..5] raw bytes)`
+1. Token ID matches `SHA-256(genesisTxId || outputIndex LE || immutableChunkBytes)` where `immutableChunkBytes = tokenName + tokenScript + tokenRules + tokenAttributes`
 2. Every entry in the proof chain has a valid Merkle proof (double SHA-256)
 3. Every Merkle root matches its block header at that height
 4. The oldest entry's txId matches the genesis txId
@@ -454,7 +456,7 @@ Output S*D+2:   P2PKH (change)
 | `tokenStore.ts` | Wallet | localStorage persistence for tokens and proof chains. |
 | `tokenBuilder.ts` | Wallet | Token lifecycle: mint, transfer, verify, detect incoming. UTXO quarantine. SPV verification on import (genesis Merkle proof + block header). File fetch from genesis. Return-to-sender detection. |
 | `fileCache.ts` | Wallet | IndexedDB-backed file cache for embedded NFT file data. Pruning recovery store. |
-| `app.ts` | UI | Browser entry point. DOM manipulation, event handlers, rendering. File upload, viewer, recovery. Fragment grouping and labeling. |
+| `app.ts` | UI | Browser entry point. DOM manipulation, event handlers, rendering. File upload, viewer, recovery. Fragment grouping/labeling via `formatFragmentIndices()`. |
 | `index.html` | UI | Single-page wallet interface. |
 | `build.mjs` | Tooling | esbuild bundler: `src/app.ts` -> `bundle.js` (IIFE, browser). |
 | `serve.mjs` | Tooling | Dev server with WoC reverse proxy to bypass CORS. |
@@ -747,9 +749,9 @@ All keys are prefixed with `mpt:data:` (configured at initialization):
 |-------|------|-------------|
 | `tokenId` | string | SHA-256 hash, permanent identifier |
 | `genesisTxId` | string | Hash of the genesis transaction |
-| `genesisOutputIndex` | number | Output index of the token's P2PKH in the genesis TX. Starts at 1 (Output 0 is OP_RETURN). Single mint = 1, batch mint = 1..N, divisible = 1..S*D. |
+| `genesisOutputIndex` | number | Output index of the token's P2PKH in the genesis TX. Starts at 1 (Output 0 is OP_RETURN). Single mint = 1, batch mint = 1..N, divisible = 1..S*D. Never changes across transfers. |
 | `currentTxId` | string | Hash of the TX holding the current token UTXO |
-| `currentOutputIndex` | number | Output index of the current token UTXO. Always 0 after a transfer (P2PKH is Output 0 in transfer TXs). Equals `genesisOutputIndex` at mint time. |
+| `currentOutputIndex` | number | Output index of the current token UTXO. For genesis TXs: equals `genesisOutputIndex`. After first transfer: always 0 (P2PKH is Output 0 in transfer TXs). |
 | `tokenName` | string | Human-readable name |
 | `tokenScript` | string | Variable hex, consensus script (empty = P2PKH) |
 | `tokenRules` | string | 8-byte hex (supply, divisibility, restrictions, version) |
