@@ -164,6 +164,17 @@ export class TokenBuilder {
   }
 
   /**
+   * Get spendable balance (excludes sats locked in token UTXOs).
+   *
+   * This returns the balance available for spending, excluding any
+   * 1-sat UTXOs that are reserved for token ownership.
+   */
+  async getSpendableBalance(): Promise<number> {
+    const safeUtxos = await this.getSafeUtxos()
+    return safeUtxos.reduce((sum, u) => sum + u.satoshis, 0)
+  }
+
+  /**
    * SPV verification gate for token import.
    *
    * Checks Token ID derivation, then verifies the genesis TX's Merkle
@@ -618,6 +629,73 @@ export class TokenBuilder {
     return { txId, tokenId, amountSent: amount, change }
   }
 
+  /**
+   * Forward a specific fungible UTXO (typically one with state data/message).
+   * Preserves the state data from the original UTXO.
+   */
+  async forwardFungibleUtxo(
+    tokenId: string,
+    utxoTxId: string,
+    utxoOutputIndex: number,
+    recipientAddress: string,
+  ): Promise<FungibleTransferResult> {
+    const token = await this.store.getFungibleToken(tokenId)
+    if (!token) throw new Error(`Fungible token not found: ${tokenId}`)
+
+    // Find the specific UTXO
+    const utxo = token.utxos.find(
+      u => u.txId === utxoTxId && u.outputIndex === utxoOutputIndex && u.status === 'active'
+    )
+    if (!utxo) {
+      throw new Error(`UTXO not found or not active: ${utxoTxId}:${utxoOutputIndex}`)
+    }
+
+    // Fetch funding UTXOs for miner fee
+    const fundingUtxos = await this.getSafeUtxos()
+    if (fundingUtxos.length === 0) {
+      throw new Error('No funding UTXOs available for fees')
+    }
+
+    // Fetch source transaction for the token UTXO
+    const tokenSourceTx = await this.provider.getSourceTransaction(utxo.txId)
+
+    // Get proof chain for OP_RETURN
+    const proofChain = await this.store.getProofChain(tokenId)
+
+    // Use the UTXO's state data (preserve the message)
+    const stateData = utxo.stateData || token.stateData
+
+    const opReturnData: TokenOpReturnData = {
+      tokenName: token.tokenName,
+      tokenScript: token.tokenScript,
+      tokenRules: token.tokenRules,
+      tokenAttributes: token.tokenAttributes,
+      stateData,
+      genesisTxId: token.genesisTxId,
+      proofChainEntries: proofChain?.entries ?? [],
+      genesisOutputIndex: 1,  // Fixed for fungible tokens
+    }
+
+    // Build TX: single UTXO, no change (send entire UTXO)
+    const { rawHex, txId, fee } = await this.buildFundedFungibleTransferTx(
+      [{ tx: tokenSourceTx, outputIndex: utxo.outputIndex }],
+      fundingUtxos,
+      this.myAddress,
+      recipientAddress,
+      utxo.satoshis,  // Send entire UTXO
+      0,              // No change
+      opReturnData,
+    )
+
+    await this.provider.broadcast(rawHex)
+
+    // Mark the UTXO as transferred
+    utxo.status = 'transferred'
+    await this.store.updateFungibleToken(token)
+
+    return { txId, tokenId, amountSent: utxo.satoshis, change: 0 }
+  }
+
   // ── Transfer ──────────────────────────────────────────────────
 
   async createTransfer(tokenId: string, recipientAddress: string): Promise<TransferResult> {
@@ -849,6 +927,13 @@ export class TokenBuilder {
     for (const h of history) txIdSet.add(h.txId)
     for (const u of utxos) txIdSet.add(u.txId)
 
+    // Build set of currently unspent outputs: "txId:outputIndex"
+    // This is CRITICAL: only import outputs that are still unspent on-chain
+    const unspentSet = new Set<string>()
+    for (const u of utxos) {
+      unspentSet.add(`${u.txId}:${u.outputIndex}`)
+    }
+
     const allTxIds = Array.from(txIdSet)
     if (allTxIds.length === 0) {
       onStatus?.('No transactions found.')
@@ -858,28 +943,50 @@ export class TokenBuilder {
     const imported: OwnedToken[] = []
     const existingTokens = await this.store.listTokens()
     const existingFungibleTokens = await this.store.listFungibleTokens()
-    // Include both currentTxId and genesisTxId to avoid re-scanning known TXs
-    const existingTxIds = new Set<string>()
+
+    // Track NFT TXs that can be skipped entirely (NFTs are 1:1 with TXs)
+    const nftTxIds = new Set<string>()
     for (const t of existingTokens) {
-      existingTxIds.add(t.currentTxId)
-      existingTxIds.add(t.genesisTxId)
+      nftTxIds.add(t.currentTxId)
+      nftTxIds.add(t.genesisTxId)
     }
-    // Also track fungible token TXs (genesis and all UTXOs)
+
+    // Track specific fungible UTXOs we already know about (txId:outputIndex)
+    // We can't skip TXs for fungible tokens because one TX may have multiple UTXOs
+    const knownFungibleUtxos = new Set<string>()
     for (const ft of existingFungibleTokens) {
-      existingTxIds.add(ft.genesisTxId)
       for (const u of ft.utxos) {
-        existingTxIds.add(u.txId)
+        knownFungibleUtxos.add(`${u.txId}:${u.outputIndex}`)
+      }
+    }
+
+    // Build set of TXs that have potential new fungible UTXOs
+    // (unspent outputs not already in our fungible token baskets)
+    const txsWithPotentialNewUtxos = new Set<string>()
+    for (const u of utxos) {
+      if (!knownFungibleUtxos.has(`${u.txId}:${u.outputIndex}`)) {
+        txsWithPotentialNewUtxos.add(u.txId)
       }
     }
 
     onStatus?.(`Scanning ${allTxIds.length} transactions...`)
     console.debug(`checkIncoming: my address = ${this.myAddress}`)
-    console.debug(`checkIncoming: already known TXs = ${existingTxIds.size}, scanning ${allTxIds.length} total`)
+    console.debug(`checkIncoming: NFT TXs=${nftTxIds.size}, knownFungibleUtxos=${knownFungibleUtxos.size}, txsWithPotentialNew=${txsWithPotentialNewUtxos.size}`)
 
     for (const txId of allTxIds) {
-      if (existingTxIds.has(txId)) {
-        console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (already in store)`)
+      // Skip if it's a known NFT TX AND doesn't have potential new fungible UTXOs
+      if (nftTxIds.has(txId) && !txsWithPotentialNewUtxos.has(txId)) {
+        console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (known NFT TX, no new UTXOs)`)
         continue
+      }
+      // Skip if all unspent outputs from this TX are already in our fungible baskets
+      if (!txsWithPotentialNewUtxos.has(txId) && !nftTxIds.has(txId)) {
+        // This TX only has UTXOs we already know about
+        const hasUnknownUtxo = utxos.some(u => u.txId === txId && !knownFungibleUtxos.has(`${u.txId}:${u.outputIndex}`))
+        if (!hasUnknownUtxo) {
+          console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (all UTXOs already known)`)
+          continue
+        }
       }
 
       try {
@@ -933,15 +1040,23 @@ export class TokenBuilder {
 
         // Check if this is a fungible token
         const isFungible = opData ? decodeTokenRules(opData.tokenRules).isFungible : false
+        const isTxTransfer = opData?.genesisTxId != null
 
-        // For fungible tokens: ALL P2PKH outputs (including 1-sat) are valid token UTXOs
-        // For NFTs: only 1-sat outputs count (handled via p2pkhOutputIndices)
+        // CRITICAL: Filter to only include outputs that are still unspent on-chain
+        // Without this check, spent outputs from transaction history would be re-imported
+        const unspentP2pkhIndices = p2pkhOutputIndices.filter(i => unspentSet.has(`${txId}:${i}`))
+
+        // For fungible tokens: only specific output indices are token UTXOs (not fee change)
+        // - Genesis TX: Output 0 = OP_RETURN, Output 1 = token UTXO, Output 2+ = fee change
+        // - Transfer TX: Output 0 = recipient, Output 1 = OP_RETURN, Output 2 = token change, Output 3+ = fee change
+        // For NFTs: only 1-sat outputs count (handled via unspentP2pkhIndices)
+        const validFungibleIndices = isTxTransfer ? [0, 2] : [1]  // Transfer: recipient+change, Genesis: token output
         const fungibleOutputs = isFungible
-          ? p2pkhOutputsWithSats.filter(o => o.sats > 0)
-          : p2pkhOutputsWithSats.filter(o => o.sats > 0 && o.sats !== TOKEN_SATS)
+          ? p2pkhOutputsWithSats.filter(o => o.sats > 0 && validFungibleIndices.includes(o.index) && unspentSet.has(`${txId}:${o.index}`))
+          : p2pkhOutputsWithSats.filter(o => o.sats > 0 && o.sats !== TOKEN_SATS && unspentSet.has(`${txId}:${o.index}`))
 
-        if (!opData || (p2pkhOutputIndices.length === 0 && fungibleOutputs.length === 0)) {
-          console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (opData=${!!opData}, nftMatches=${p2pkhOutputIndices.length}, fungibleMatches=${fungibleOutputs.length})`)
+        if (!opData || (unspentP2pkhIndices.length === 0 && fungibleOutputs.length === 0)) {
+          console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (opData=${!!opData}, nftMatches=${unspentP2pkhIndices.length}, fungibleMatches=${fungibleOutputs.length})`)
           continue
         }
 
@@ -975,6 +1090,7 @@ export class TokenBuilder {
 
           if (fungibleToken) {
             // Add new UTXOs to existing basket
+            const now = new Date().toISOString()
             for (const output of fungibleOutputs) {
               const existingUtxo = fungibleToken.utxos.find(
                 u => u.txId === txId && u.outputIndex === output.index
@@ -985,15 +1101,18 @@ export class TokenBuilder {
                   outputIndex: output.index,
                   satoshis: output.sats,
                   status: 'active',
+                  stateData: opData.stateData || undefined,  // Per-UTXO state data
+                  receivedAt: now,
                 })
                 onStatus?.(`Found fungible UTXO: ${opData.tokenName} +${output.sats} sats`)
               }
             }
-            // Update state data from transfer
+            // Also update token-level state data for backwards compatibility
             fungibleToken.stateData = opData.stateData
             await this.store.updateFungibleToken(fungibleToken)
           } else {
             // Create new fungible token with UTXOs
+            const now = new Date().toISOString()
             fungibleToken = {
               tokenId,
               genesisTxId,
@@ -1007,8 +1126,10 @@ export class TokenBuilder {
                 outputIndex: o.index,
                 satoshis: o.sats,
                 status: 'active' as const,
+                stateData: opData.stateData || undefined,  // Per-UTXO state data
+                receivedAt: now,
               })),
-              createdAt: new Date().toISOString(),
+              createdAt: now,
             }
             await this.store.addFungibleToken(fungibleToken, verification.chain)
             onStatus?.(`Found fungible token: ${opData.tokenName} (${fungibleOutputs.reduce((s, o) => s + o.sats, 0)} sats)`)
@@ -1017,13 +1138,13 @@ export class TokenBuilder {
         }
 
         // NFT handling (original logic)
-        if (p2pkhOutputIndices.length === 0) {
-          continue  // No 1-sat outputs for NFT
+        if (unspentP2pkhIndices.length === 0) {
+          continue  // No unspent 1-sat outputs for NFT
         }
 
         if (isTransfer) {
           // Transfer TX: single token, P2PKH at first matched output
-          const p2pkhOutputIndex = p2pkhOutputIndices[0]
+          const p2pkhOutputIndex = unspentP2pkhIndices[0]
           const genesisOutputIndex = opData.genesisOutputIndex ?? 1
           console.debug(`checkIncoming TRANSFER: opData.genesisOutputIndex=${opData.genesisOutputIndex}, using genesisOutputIndex=${genesisOutputIndex}`)
 
@@ -1075,9 +1196,9 @@ export class TokenBuilder {
         } else {
           // Genesis TX: one token per P2PKH output
           // Verify once for the first token (all share the same genesis TX)
-          const firstTokenId = computeTokenId(genesisTxId, p2pkhOutputIndices[0], immutableBytes)
+          const firstTokenId = computeTokenId(genesisTxId, unspentP2pkhIndices[0], immutableBytes)
           const genesisVerification = await this.verifyBeforeImport(
-            firstTokenId, genesisTxId, p2pkhOutputIndices[0], immutableBytes,
+            firstTokenId, genesisTxId, unspentP2pkhIndices[0], immutableBytes,
             [], txId,
           )
           if (!genesisVerification.valid) {
@@ -1085,7 +1206,7 @@ export class TokenBuilder {
             continue
           }
 
-          for (const p2pkhOutputIndex of p2pkhOutputIndices) {
+          for (const p2pkhOutputIndex of unspentP2pkhIndices) {
             const tokenId = computeTokenId(genesisTxId, p2pkhOutputIndex, immutableBytes)
             const existing = await this.store.getToken(tokenId)
             if (existing && existing.status === 'active') continue
