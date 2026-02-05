@@ -6,3 +6,6 @@
 !docs/
 !docs/MPT_v05_11_fundamental_design_principles.md
 !docs/MPT_v05_11_structure_and_function.md
+!prototypes/
+!prototypes/MPT_v05_20/
+!prototypes/MPT_v05_20/**
