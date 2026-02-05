@@ -49,6 +49,7 @@
 
     .badge { font-size: 0.75em; padding: 2px 8px; border-radius: 10px; font-weight: normal; }
     .badge-active { background: #238636; color: #fff; }
+    .badge-unconfirmed { background: #8957e5; color: #fff; }
     .badge-pending { background: #d29922; color: #000; }
     .badge-transferred { background: #8b949e; color: #000; }
 
@@ -170,6 +171,7 @@
     <h2>Transfer Token</h2>
     <input id="transfer-token-id" placeholder="Token ID (select from My Tokens)" />
     <input id="transfer-recipient" placeholder="Recipient BSV address (e.g. 1A1zP1...)" />
+    <textarea id="transfer-message" placeholder="Message (optional, stored on-chain)" rows="2" style="resize:vertical;"></textarea>
     <button id="btn-transfer">Transfer</button>
     <pre id="transfer-result"></pre>
   </section>

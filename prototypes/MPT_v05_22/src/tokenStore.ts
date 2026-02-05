@@ -8,7 +8,7 @@ import type { ProofChain } from './tokenProtocol'
 
 // ─── Types ──────────────────────────────────────────────────────────
 
-export type TokenStatus = 'active' | 'pending_transfer' | 'transferred'
+export type TokenStatus = 'active' | 'pending' | 'pending_transfer' | 'transferred'
 
 export interface OwnedToken {
   tokenId: string

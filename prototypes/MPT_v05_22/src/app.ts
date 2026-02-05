@@ -42,6 +42,8 @@ function inferMimeType(fileName: string, browserType: string): string {
     svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg',
     jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
     bmp: 'image/bmp', ico: 'image/x-icon',
+    wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg',
+    flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac',
     pdf: 'application/pdf', zip: 'application/zip',
   }
   return (ext && map[ext]) || 'application/octet-stream'
@@ -146,7 +148,7 @@ function init() {
         if (fileInfo) {
           fileInfo.style.display = ''
           fileInfo.textContent = `File: ${file.name} (${inferMimeType(file.name, file.type)}, ${(file.size / 1024).toFixed(1)} KB)`
-          if (file.size > 250_000) {
+          if (file.size > 1_000_000) {
             fileInfo.textContent += ' — WARNING: Large file, high fee cost'
           }
         }
@@ -454,10 +456,10 @@ function renderFungibleCard(ft: FungibleToken): string {
   const totalBalance = regularBalance + messageBalance
   const pendingBalance = pendingUtxos.reduce((sum, u) => sum + u.satoshis, 0)
 
-  // Render messages section
+  // Render messages section (collapsible)
   const messagesHtml = messageUtxos.length > 0 ? `
-      <div style="margin-top:12px;padding-top:12px;border-top:1px solid #30363d;">
-        <div style="font-weight:bold;margin-bottom:8px;color:#58a6ff;">📨 Messages (${messageUtxos.length})</div>
+      <details style="margin-top:12px;padding-top:12px;border-top:1px solid #30363d;">
+        <summary style="cursor:pointer;font-weight:bold;color:#58a6ff;margin-bottom:8px;">📨 Messages (${messageUtxos.length})</summary>
         ${messageUtxos.map(u => {
           const stateDecoded = tryDecodeHex(u.stateData!)
           return `
@@ -474,7 +476,7 @@ function renderFungibleCard(ft: FungibleToken): string {
             </div>
           </div>`
         }).join('')}
-      </div>` : ''
+      </details>` : ''
 
   return `
     <div class="token-card" style="border-color:#238636;">
@@ -509,7 +511,7 @@ function renderFungibleCard(ft: FungibleToken): string {
             return `
             <div style="padding:8px 0;border-bottom:1px solid #21262d;">
               <div style="display:flex;align-items:center;gap:8px;">
-                <span class="badge ${u.status === 'active' ? 'badge-active' : u.status === 'pending_transfer' ? 'badge-pending' : 'badge-transferred'}">${u.status}</span>
+                <span class="badge ${u.status === 'active' ? 'badge-active' : u.status === 'pending' ? 'badge-unconfirmed' : u.status === 'pending_transfer' ? 'badge-pending' : 'badge-transferred'}">${u.status === 'pending' ? 'unconfirmed' : u.status}</span>
                 <strong>${u.satoshis.toLocaleString()} tokens</strong>
                 ${u.receivedAt ? `<span class="muted" style="font-size:0.8em;">${formatDate(u.receivedAt)}</span>` : ''}
                 <button onclick="window._removeUtxo('${ft.tokenId}', '${u.txId}', ${u.outputIndex})" style="margin-left:auto;font-size:0.7em;padding:2px 6px;background:#da3633;" title="Remove this UTXO from basket">×</button>
@@ -590,6 +592,7 @@ function renderTokenDetail(t: OwnedToken): string {
 function renderStatusBadge(status: string): string {
   switch (status) {
     case 'active': return '<span class="badge badge-active">Active</span>'
+    case 'pending': return '<span class="badge badge-unconfirmed">Unconfirmed</span>'
     case 'pending_transfer': return '<span class="badge badge-pending">Pending Transfer</span>'
     case 'transferred': return '<span class="badge badge-transferred">Transferred</span>'
     default: return ''
@@ -824,8 +827,8 @@ async function handleMint() {
   let fileData: { bytes: Uint8Array; mimeType: string; fileName: string } | undefined
 
   if (selectedFile) {
-    if (selectedFile.size > 250_000) {
-      setResult('mint-result', 'File too large. Max ~250KB for on-chain storage.')
+    if (selectedFile.size > 10_000_000) {
+      setResult('mint-result', 'File too large. Max 10MB for on-chain storage.')
       return
     }
     const arrayBuf = await selectedFile.arrayBuffer()
@@ -895,6 +898,7 @@ async function handleMint() {
 async function handleTransfer() {
   const tokenId = inputVal('transfer-token-id')
   const recipient = inputVal('transfer-recipient')
+  const messageText = inputVal('transfer-message')
 
   if (!tokenId || !recipient) {
     setResult('transfer-result', 'Enter both Token ID and recipient BSV address.')
@@ -919,7 +923,9 @@ async function handleTransfer() {
       return
     }
 
-    const result = await builder.createTransfer(tokenId, recipient)
+    // Convert message text to hex if provided
+    const newStateData = messageText ? textToHex(messageText) : undefined
+    const result = await builder.createTransfer(tokenId, recipient, newStateData)
 
     setResult('transfer-result', [
       'Transfer broadcast!',
