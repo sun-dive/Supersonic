@@ -44,9 +44,38 @@ function inferMimeType(fileName: string, browserType: string): string {
     bmp: 'image/bmp', ico: 'image/x-icon',
     wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg',
     flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac',
+    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+    avi: 'video/x-msvideo', mkv: 'video/x-matroska',
     pdf: 'application/pdf', zip: 'application/zip',
   }
   return (ext && map[ext]) || 'application/octet-stream'
+}
+
+/** Get an icon character for a MIME type */
+function getMimeTypeIcon(mimeType: string): string {
+  if (mimeType.startsWith('image/')) return '\u{1F5BC}'  // framed picture
+  if (mimeType.startsWith('audio/')) return '\u{1F3B5}'  // musical note
+  if (mimeType.startsWith('video/')) return '\u{1F3AC}'  // clapper board
+  if (mimeType.startsWith('text/')) return '\u{1F4C4}'   // page facing up
+  if (mimeType === 'application/pdf') return '\u{1F4D1}' // bookmark tabs
+  if (mimeType === 'application/zip') return '\u{1F4E6}' // package
+  return '\u{1F4CE}'  // paperclip (generic file)
+}
+
+/** Store/retrieve file metadata in localStorage for sync icon display */
+const FILE_META_KEY = 'mpt:fileMeta'
+function getFileMeta(hash: string): { mimeType: string; fileName: string } | null {
+  try {
+    const data = JSON.parse(localStorage.getItem(FILE_META_KEY) || '{}')
+    return data[hash] || null
+  } catch { return null }
+}
+function setFileMeta(hash: string, mimeType: string, fileName: string): void {
+  try {
+    const data = JSON.parse(localStorage.getItem(FILE_META_KEY) || '{}')
+    data[hash] = { mimeType, fileName }
+    localStorage.setItem(FILE_META_KEY, JSON.stringify(data))
+  } catch { /* ignore */ }
 }
 
 // ─── Initialization ─────────────────────────────────────────────────
@@ -161,6 +190,36 @@ function init() {
       if (attrsInput) attrsInput.disabled = false
       clearBtn.style.display = 'none'
       if (fileInfo) { fileInfo.style.display = 'none'; fileInfo.textContent = '' }
+    })
+  }
+
+  // Transfer file upload handlers
+  const transferFileInput = el('transfer-file') as HTMLInputElement
+  const transferClearBtn = el('btn-clear-transfer-file')
+  const transferFileInfo = el('transfer-file-info')
+  const transferMsgInput = el('transfer-message') as HTMLTextAreaElement
+
+  if (transferFileInput) {
+    transferFileInput.addEventListener('change', () => {
+      const file = transferFileInput.files?.[0]
+      if (file) {
+        // Don't disable message - allow both message and file
+        if (transferClearBtn) transferClearBtn.style.display = ''
+        if (transferFileInfo) {
+          transferFileInfo.style.display = ''
+          transferFileInfo.textContent = `File: ${file.name} (${inferMimeType(file.name, file.type)}, ${(file.size / 1024).toFixed(1)} KB)`
+          if (file.size > 1_000_000) {
+            transferFileInfo.textContent += ' — WARNING: Large file, high fee cost'
+          }
+        }
+      }
+    })
+  }
+  if (transferClearBtn) {
+    transferClearBtn.addEventListener('click', () => {
+      if (transferFileInput) transferFileInput.value = ''
+      transferClearBtn.style.display = 'none'
+      if (transferFileInfo) { transferFileInfo.style.display = 'none'; transferFileInfo.textContent = '' }
     })
   }
 
@@ -534,7 +593,7 @@ function renderTokenCard(t: OwnedToken): string {
   const actions = renderTokenActions(t)
   const rules = renderRules(t.tokenRules)
   const attrsDisplay = renderHexField(t.tokenAttributes, t)
-  const stateDisplay = renderStateData(t.stateData)
+  const stateDisplay = renderStateData(t.stateData, t)
   const r = decodeTokenRules(t.tokenRules)
   const isFragment = r.divisibility > 0 && r.supply > 0
   const totalFragments = isFragment ? r.supply * r.divisibility : r.supply
@@ -567,7 +626,7 @@ function renderTokenDetail(t: OwnedToken): string {
   const statusBadge = renderStatusBadge(t.status)
   const actions = renderTokenActions(t)
   const attrsDisplay = renderHexField(t.tokenAttributes, t)
-  const stateDisplay = renderStateData(t.stateData)
+  const stateDisplay = renderStateData(t.stateData, t)
   const r = decodeTokenRules(t.tokenRules)
   const isFragment = r.divisibility > 0 && r.supply > 0
   const fragLine = isFragment
@@ -639,7 +698,10 @@ function renderHexField(hex: string, token?: OwnedToken): string {
   if (!hex || hex === '00') return '<span class="muted">(none)</span>'
   // 64 hex chars = 32 bytes = possible SHA-256 file hash
   if (hex.length === 64 && token) {
-    return `<code class="muted">${escHtml(hex)}</code> <button onclick="window._viewFile('${token.genesisTxId}', '${hex}')" style="font-size:0.8em; padding:2px 8px; background:#30363d;">View File</button>`
+    const meta = getFileMeta(hex)
+    const icon = meta ? getMimeTypeIcon(meta.mimeType) : '\u{1F4CE}' // paperclip default
+    const label = meta ? `${icon} ${meta.fileName}` : `${icon} View File`
+    return `<code class="muted">${escHtml(hex)}</code> <button onclick="window._viewFile('${token.genesisTxId}', '${hex}')" style="font-size:0.8em; padding:2px 8px; background:#30363d;">${label}</button>`
   }
   try {
     const bytes = new Uint8Array(hex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
@@ -651,8 +713,53 @@ function renderHexField(hex: string, token?: OwnedToken): string {
   return `<code>${escHtml(hex)}</code>`
 }
 
-function renderStateData(stateHex: string): string {
+function renderStateData(stateHex: string, token?: OwnedToken): string {
   if (!stateHex || stateHex === '00') return '<span class="muted">(empty)</span>'
+
+  // Check for combined message+file format: message_hex + file_hash (64 chars)
+  // If stateHex > 64 chars, try to detect combined format (with or without metadata)
+  if (stateHex.length > 64 && token) {
+    const possibleHash = stateHex.slice(-64)
+    const possibleMsgHex = stateHex.slice(0, -64)
+
+    // Check if last 64 chars look like valid hex (potential file hash)
+    const looksLikeHash = /^[0-9a-f]{64}$/i.test(possibleHash)
+
+    if (looksLikeHash) {
+      // Try to decode the message portion as UTF-8
+      let msgPreview = ''
+      let msgDecoded = false
+      try {
+        const bytes = new Uint8Array(possibleMsgHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
+        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+        if (/^[\x20-\x7e\t\n\r]+$/.test(decoded)) {
+          msgPreview = `"${escHtml(decoded)}"<br>`
+          msgDecoded = true
+        }
+      } catch { /* not valid UTF-8 */ }
+
+      // If message decoded successfully, this is likely combined format
+      if (msgDecoded) {
+        const meta = getFileMeta(possibleHash)
+        const icon = meta ? getMimeTypeIcon(meta.mimeType) : '\u{1F4CE}'
+        const label = meta ? `${icon} ${meta.fileName}` : `${icon} View File`
+        return `${msgPreview}<code class="muted">${escHtml(possibleMsgHex)}</code><br><button onclick="window._viewFile('${token.genesisTxId}', '${possibleHash}', '${token.currentTxId}')" style="font-size:0.8em; padding:2px 8px; background:#30363d; margin-top:4px;">${label}</button>`
+      }
+    }
+  }
+
+  // 64 hex chars = 32 bytes = possible SHA-256 file hash (from transfer with file only)
+  if (stateHex.length === 64 && token) {
+    const meta = getFileMeta(stateHex)
+    if (meta) {
+      const icon = getMimeTypeIcon(meta.mimeType)
+      const label = `${icon} ${meta.fileName}`
+      return `<code class="muted">${escHtml(stateHex)}</code> <button onclick="window._viewFile('${token.genesisTxId}', '${stateHex}', '${token.currentTxId}')" style="font-size:0.8em; padding:2px 8px; background:#30363d;">${label}</button>`
+    }
+    // 64 chars but no metadata - might still be a file hash, show generic button
+    return `<code class="muted">${escHtml(stateHex)}</code> <button onclick="window._viewFile('${token.genesisTxId}', '${stateHex}', '${token.currentTxId}')" style="font-size:0.8em; padding:2px 8px; background:#30363d;">\u{1F4CE} View File</button>`
+  }
+
   // Try to decode as UTF-8 text
   let textPreview = ''
   try {
@@ -827,8 +934,8 @@ async function handleMint() {
   let fileData: { bytes: Uint8Array; mimeType: string; fileName: string } | undefined
 
   if (selectedFile) {
-    if (selectedFile.size > 10_000_000) {
-      setResult('mint-result', 'File too large. Max 10MB for on-chain storage.')
+    if (selectedFile.size > 50_000_000) {
+      setResult('mint-result', 'File too large. Max 50MB for on-chain storage.')
       return
     }
     const arrayBuf = await selectedFile.arrayBuffer()
@@ -861,6 +968,7 @@ async function handleMint() {
       const hashBytes = Hash.sha256(Array.from(fileData.bytes))
       const hash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
       await fileCache.store(hash, fileData)
+      setFileMeta(hash, fileData.mimeType, fileData.fileName)
     }
 
     const count = result.tokenIds.length
@@ -908,7 +1016,27 @@ async function handleTransfer() {
   const feeRate = parseInt(inputVal('fee-rate'), 10)
   if (feeRate > 0) builder.feePerKb = feeRate
 
-  setResult('transfer-result', 'Building transfer transaction...')
+  // Check for file attachment
+  const transferFileInput = el('transfer-file') as HTMLInputElement
+  const selectedFile = transferFileInput?.files?.[0]
+  let fileData: { bytes: Uint8Array; mimeType: string; fileName: string } | undefined
+
+  if (selectedFile) {
+    if (selectedFile.size > 50_000_000) {
+      setResult('transfer-result', 'File too large. Max 50MB for on-chain storage.')
+      return
+    }
+    const arrayBuf = await selectedFile.arrayBuffer()
+    fileData = {
+      bytes: new Uint8Array(arrayBuf),
+      mimeType: inferMimeType(selectedFile.name, selectedFile.type),
+      fileName: selectedFile.name,
+    }
+  }
+
+  setResult('transfer-result', fileData
+    ? `Building transfer transaction with file (${(fileData.bytes.length / 1024).toFixed(1)} KB)...`
+    : 'Building transfer transaction...')
 
   try {
     // Check if this is a fungible token - if so, redirect user to use the fungible Send button
@@ -923,18 +1051,51 @@ async function handleTransfer() {
       return
     }
 
-    // Convert message text to hex if provided
-    const newStateData = messageText ? textToHex(messageText) : undefined
-    const result = await builder.createTransfer(tokenId, recipient, newStateData)
+    // Build stateData: can have message, file hash, or both
+    // Format: message_hex + file_hash (64 chars) when both present
+    let newStateData: string | undefined
+    if (fileData) {
+      const hashBytes = Hash.sha256(Array.from(fileData.bytes))
+      const fileHash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+      if (messageText) {
+        // Both message and file: message bytes followed by file hash
+        newStateData = textToHex(messageText) + fileHash
+      } else {
+        // File only: just the hash
+        newStateData = fileHash
+      }
+    } else if (messageText) {
+      // Message only
+      newStateData = textToHex(messageText)
+    }
+    const result = await builder.createTransfer(tokenId, recipient, newStateData, fileData)
+
+    // Cache file locally if attached
+    if (fileData) {
+      const hashBytes = Hash.sha256(Array.from(fileData.bytes))
+      const hash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+      await fileCache.store(hash, fileData)
+      setFileMeta(hash, fileData.mimeType, fileData.fileName)
+    }
 
     setResult('transfer-result', [
       'Transfer broadcast!',
       `TXID: ${result.txId}`,
+      fileData ? `File attached: ${fileData.fileName}` : '',
       `View: https://whatsonchain.com/tx/${result.txId}`,
       '',
       'Token data is encoded on-chain. The recipient can click',
       '"Check Incoming Tokens" to auto-import it.',
-    ].join('\n'))
+    ].filter(Boolean).join('\n'))
+
+    // Clear the file input after successful transfer
+    if (transferFileInput) transferFileInput.value = ''
+    const transferClearBtn = el('btn-clear-transfer-file')
+    const transferFileInfo = el('transfer-file-info')
+    const transferMsgInput = el('transfer-message') as HTMLTextAreaElement
+    if (transferClearBtn) transferClearBtn.style.display = 'none'
+    if (transferFileInfo) { transferFileInfo.style.display = 'none'; transferFileInfo.textContent = '' }
+    if (transferMsgInput) transferMsgInput.disabled = false
 
     await refreshTokenList()
     await refreshBalance()
@@ -1237,9 +1398,14 @@ function handleRestoreWallet() {
   }
 }
 
-;(window as any)._viewFile = async (genesisTxId: string, hash: string) => {
+;(window as any)._viewFile = async (genesisTxId: string, hash: string, currentTxId?: string) => {
   // 1. Check local IndexedDB cache
   let file = await fileCache.get(hash)
+
+  // Sync metadata to localStorage if we have a cached file but no metadata
+  if (file && !getFileMeta(hash)) {
+    setFileMeta(hash, file.mimeType, file.fileName)
+  }
 
   // 2. Fetch from genesis TX
   if (!file) {
@@ -1248,13 +1414,28 @@ function handleRestoreWallet() {
       if (fetched) {
         file = { hash, ...fetched }
         await fileCache.store(hash, fetched)
+        setFileMeta(hash, fetched.mimeType, fetched.fileName)
       }
     } catch (e: any) {
       console.debug('fetchFileFromGenesis failed:', e.message)
     }
   }
 
-  // 3. Pruning recovery: prompt user to provide original file
+  // 3. Try current TX (for files attached during transfer)
+  if (!file && currentTxId && currentTxId !== genesisTxId) {
+    try {
+      const fetched = await builder.fetchFileFromGenesis(currentTxId, hash)
+      if (fetched) {
+        file = { hash, ...fetched }
+        await fileCache.store(hash, fetched)
+        setFileMeta(hash, fetched.mimeType, fetched.fileName)
+      }
+    } catch (e: any) {
+      console.debug('fetchFileFromTransfer failed:', e.message)
+    }
+  }
+
+  // 4. Pruning recovery: prompt user to provide original file
   if (!file) {
     promptFileRecovery(hash)
     return
@@ -1267,23 +1448,122 @@ function displayFile(file: { mimeType: string; fileName: string; bytes: Uint8Arr
   const blob = new Blob([file.bytes.buffer as ArrayBuffer], { type: file.mimeType })
   const url = URL.createObjectURL(blob)
 
-  if (file.mimeType.startsWith('image/')) {
-    const win = window.open('', '_blank')
-    if (win) {
-      win.document.write(`<html><head><title>${file.fileName}</title></head><body style="margin:0;background:#111;display:flex;justify-content:center;align-items:center;min-height:100vh;"><img src="${url}" style="max-width:100%;max-height:100vh;" /></body></html>`)
-    }
-  } else if (file.mimeType.startsWith('text/')) {
-    const text = new TextDecoder().decode(file.bytes)
-    const win = window.open('', '_blank')
-    if (win) {
-      win.document.write(`<html><head><title>${file.fileName}</title></head><body style="margin:20px;background:#0d1117;color:#c9d1d9;font-family:monospace;"><pre>${text.replace(/</g, '&lt;')}</pre></body></html>`)
-    }
-  } else {
+  const modal = el('media-modal')
+  const filenameEl = el('media-filename')
+  const contentEl = el('media-content')
+  if (!modal || !filenameEl || !contentEl) {
+    // Fallback to download if modal not found
     const a = document.createElement('a')
     a.href = url
     a.download = file.fileName
     a.click()
+    return
   }
+
+  filenameEl.textContent = file.fileName
+  let html = ''
+
+  const controlsEl = el('media-controls')
+  const isMedia = file.mimeType.startsWith('audio/') || file.mimeType.startsWith('video/')
+
+  if (file.mimeType.startsWith('image/')) {
+    html = `<img src="${url}" alt="${escHtml(file.fileName)}" />`
+  } else if (file.mimeType.startsWith('audio/')) {
+    html = `<audio id="media-player" src="${url}" autoplay></audio>`
+  } else if (file.mimeType.startsWith('video/')) {
+    html = `<video id="media-player" src="${url}" controls autoplay></video>`
+  } else if (file.mimeType.startsWith('text/')) {
+    const text = new TextDecoder().decode(file.bytes)
+    html = `<pre>${text.replace(/</g, '&lt;')}</pre>`
+  } else {
+    // Unknown type: download instead
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.fileName
+    a.click()
+    return
+  }
+
+  contentEl.innerHTML = html
+  modal.classList.add('show')
+
+  // Show/hide media controls and reset loop button state
+  if (controlsEl) {
+    controlsEl.style.display = isMedia ? 'flex' : 'none'
+    const loopBtn = el('mc-loop')
+    if (loopBtn) loopBtn.classList.remove('active')
+  }
+
+  // Close on Escape key
+  const escHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') closeMediaModal()
+  }
+  document.addEventListener('keydown', escHandler)
+  ;(modal as any)._escHandler = escHandler
+
+  // Close on backdrop click
+  modal.onclick = (e) => {
+    if (e.target === modal) closeMediaModal()
+  }
+}
+
+function closeMediaModal() {
+  const modal = el('media-modal')
+  const contentEl = el('media-content')
+  if (modal) {
+    modal.classList.remove('show')
+    // Remove Escape key handler
+    if ((modal as any)._escHandler) {
+      document.removeEventListener('keydown', (modal as any)._escHandler)
+    }
+  }
+  // Stop any playing media and clear content
+  if (contentEl) {
+    const video = contentEl.querySelector('video')
+    const audio = contentEl.querySelector('audio')
+    if (video) video.pause()
+    if (audio) audio.pause()
+    contentEl.innerHTML = ''
+  }
+}
+
+;(window as any)._closeMediaModal = closeMediaModal
+
+// Media control handlers
+function getMediaPlayer(): HTMLMediaElement | null {
+  return document.getElementById('media-player') as HTMLMediaElement | null
+}
+
+;(window as any)._mediaPlay = () => {
+  const player = getMediaPlayer()
+  if (player) player.play()
+}
+
+;(window as any)._mediaPause = () => {
+  const player = getMediaPlayer()
+  if (player) player.pause()
+}
+
+;(window as any)._mediaStop = () => {
+  const player = getMediaPlayer()
+  if (player) {
+    player.pause()
+    player.currentTime = 0
+  }
+}
+
+;(window as any)._mediaLoop = () => {
+  const player = getMediaPlayer()
+  const loopBtn = el('mc-loop')
+  if (player && loopBtn) {
+    player.loop = !player.loop
+    loopBtn.classList.toggle('active', player.loop)
+  }
+}
+
+;(window as any)._mediaVolume = (value: string) => {
+  const player = getMediaPlayer()
+  if (player) player.volume = parseInt(value, 10) / 100
 }
 
 function promptFileRecovery(expectedHash: string) {
@@ -1313,6 +1593,7 @@ function promptFileRecovery(expectedHash: string) {
     }
 
     await fileCache.store(expectedHash, fileData)
+    setFileMeta(expectedHash, fileData.mimeType, fileData.fileName)
     displayFile(fileData)
   }
   input.click()

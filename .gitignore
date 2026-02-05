@@ -6,6 +6,9 @@
 !docs/
 !docs/MPT_fundamental_design_principles.md
 !docs/MPT_structure_and_function.md
+!docs/bitcoin.pdf
+!docs/bootcamp/
+!docs/bootcamp/**
 !prototypes/
 !prototypes/MPT_v05_20/
 !prototypes/MPT_v05_20/**

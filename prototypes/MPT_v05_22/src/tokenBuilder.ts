@@ -788,7 +788,12 @@ export class TokenBuilder {
 
   // ── Transfer ──────────────────────────────────────────────────
 
-  async createTransfer(tokenId: string, recipientAddress: string, newStateData?: string): Promise<TransferResult> {
+  async createTransfer(
+    tokenId: string,
+    recipientAddress: string,
+    newStateData?: string,
+    fileData?: { bytes: Uint8Array; mimeType: string; fileName: string },
+  ): Promise<TransferResult> {
     const token = await this.store.getToken(tokenId)
     console.debug(`createTransfer DEBUG: tokenId=${tokenId.slice(0,12)}, genesisTxId=${token?.genesisTxId?.slice(0,12)}, genesisOutputIndex=${token?.genesisOutputIndex}`)
     if (!token) throw new Error(`Token not found: ${tokenId}. Make sure you are using the Token ID (not a TXID).`)
@@ -808,13 +813,28 @@ export class TokenBuilder {
       throw new Error('No funding UTXOs available (token UTXOs are protected)')
     }
 
-    // Use new state data if provided, otherwise keep existing
-    const effectiveStateData = newStateData !== undefined ? newStateData : token.stateData
+    // Handle file data: prepare file OP_RETURN for embedding
+    let effectiveStateData: string
+    let fileOpReturn: LockingScript | null = null
+
+    if (fileData) {
+      // Build file OP_RETURN for embedding
+      fileOpReturn = buildFileOpReturn({
+        mimeType: fileData.mimeType,
+        fileName: fileData.fileName,
+        bytes: fileData.bytes,
+      })
+    }
+
+    // Determine effective stateData:
+    // - If newStateData provided (may contain message+hash), use it
+    // - Otherwise keep existing token stateData
+    effectiveStateData = newStateData !== undefined ? newStateData : token.stateData
 
     const { rawHex, txId, fee, spentInputs, changeOutput } = await this.buildFundedTransferTx(
       tokenSourceTx, token.currentOutputIndex,
       fundingCandidates, this.myAddress, (tx) => {
-        // Transfer TX structure: Output 0 = P2PKH (recipient), Output 1 = OP_RETURN
+        // Transfer TX structure: Output 0 = P2PKH (recipient), Output 1 = OP_RETURN, [Output 2 = file OP_RETURN]
         tx.addOutput({
           lockingScript: new P2PKH().lock(recipientAddress),
           satoshis: TOKEN_SATS,
@@ -835,6 +855,14 @@ export class TokenBuilder {
           lockingScript: opReturnScript,
           satoshis: 0,
         })
+
+        // Optional: file data OP_RETURN (for transfers with new files)
+        if (fileOpReturn) {
+          tx.addOutput({
+            lockingScript: fileOpReturn,
+            satoshis: 0,
+          })
+        }
       },
     )
 
@@ -1122,6 +1150,24 @@ export class TokenBuilder {
 
           // Log why decodeOpReturn returned null for OP_RETURN-looking scripts
           if (scriptHex.includes('006a') || scriptHex.startsWith('6a')) {
+            // Try to parse as file OP_RETURN (for attached files in transfers)
+            const fileData = parseFileOpReturn(output.lockingScript as LockingScript)
+            if (fileData) {
+              // Compute hash and store metadata in localStorage for UI display
+              const hashBytes = Hash.sha256(Array.from(fileData.bytes))
+              const fileHash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+              const FILE_META_KEY = 'mpt:fileMeta'
+              try {
+                const data = JSON.parse(localStorage.getItem(FILE_META_KEY) || '{}')
+                data[fileHash] = { mimeType: fileData.mimeType, fileName: fileData.fileName }
+                localStorage.setItem(FILE_META_KEY, JSON.stringify(data))
+                console.debug(`checkIncoming: ${txId.slice(0, 12)}... output[${i}] = file OP_RETURN "${fileData.fileName}" (hash=${fileHash.slice(0, 16)}...)`)
+              } catch (e) {
+                console.debug(`checkIncoming: failed to store file metadata:`, e)
+              }
+              continue
+            }
+
             const chunks = (output.lockingScript as LockingScript).chunks
             console.debug(`checkIncoming: ${txId.slice(0, 12)}... output[${i}] looks like OP_RETURN but decode failed. chunks=${chunks.length}, chunk ops=[${chunks.slice(0, 5).map((c: any) => c.op.toString(16)).join(',')}]`)
             if (chunks.length >= 3) {
