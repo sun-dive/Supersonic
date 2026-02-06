@@ -1043,13 +1043,13 @@ export class TokenBuilder {
   // ── Token Flushing (v05.23) ───────────────────────────────────
 
   /**
-   * Flush an NFT token: convert its 1-sat UTXO back to spendable sats.
-   * Optionally preserve metadata for recovery.
+   * Flush an NFT token: mark it as flushed (internal state only, no blockchain transaction).
+   * Optionally preserve metadata in localStorage; if not preserved, token is deleted.
    */
   async flushToken(
     tokenId: string,
     preserveMetadata: boolean = true,
-  ): Promise<{ txId: string; tokenId: string; satoshis: number }> {
+  ): Promise<{ tokenId: string; flushedAt: string }> {
     const token = await this.store.getToken(tokenId)
     if (!token) throw new Error(`Token not found: ${tokenId}`)
 
@@ -1063,52 +1063,32 @@ export class TokenBuilder {
       throw new Error('Cannot flush token that has been transferred away')
     }
 
-    // Fetch the source TX containing this 1-sat token
-    const tokenSourceTx = await this.provider.getSourceTransaction(token.currentTxId)
-
-    // Build flush TX: spend 1-sat token UTXO as regular sats
-    const { rawHex, txId, fee, spentInputs, changeOutput } = await this.buildFlushTx(
-      {
-        txId: token.currentTxId,
-        outputIndex: token.currentOutputIndex,
-        satoshis: 1,
-      },
-      tokenSourceTx,
-      [], // No additional funding needed for 1-sat token
-      this.myAddress,
-    )
-
-    // Broadcast the flush TX
-    await this.provider.broadcast(rawHex)
-    console.debug(`flushToken: broadcast flush TX ${txId} for token ${tokenId}`)
-
-    // Register pending TX for tracking
-    this.provider.registerPendingTx(txId, spentInputs, changeOutput ?? undefined)
-
-    // Update token status
+    // Update token status to flushed
     token.status = 'flushed'
-    token.flushTxId = txId
-    token.flushedAt = new Date().toISOString()
+    const flushedAt = new Date().toISOString()
+    token.flushedAt = flushedAt
 
     if (!preserveMetadata) {
-      // Delete the token completely
+      // Delete the token completely (remove from store)
       await this.store.deleteToken(tokenId)
+      console.debug(`flushToken: deleted token ${tokenId} (metadata not preserved)`)
     } else {
       // Keep metadata for recovery
       await this.store.updateToken(token)
+      console.debug(`flushToken: marked token ${tokenId} as flushed (metadata preserved)`)
     }
 
-    return { txId, tokenId, satoshis: 1 }
+    return { tokenId, flushedAt }
   }
 
   /**
-   * Flush a fungible token UTXO(s): convert to spendable sats.
+   * Flush fungible token UTXO(s): mark them as flushed (internal state only, no blockchain transaction).
    */
   async flushFungibleToken(
     tokenId: string,
     utxoIndexes: number[],
     preserveMetadata: boolean = true,
-  ): Promise<{ txId: string; tokenId: string; amountFlushed: number; change: number }> {
+  ): Promise<{ tokenId: string; amountFlushed: number; flushedAt: string }> {
     const fungible = await this.store.getFungibleToken(tokenId)
     if (!fungible) throw new Error(`Fungible token not found: ${tokenId}`)
 
@@ -1132,46 +1112,37 @@ export class TokenBuilder {
       }
     }
 
-    // Build flush TX for fungible UTXOs
-    const { rawHex, txId, fee, spentInputs, changeOutput } = await this.buildFungibleFlushTx(
-      tokenId,
-      utxosToFlush,
-      this.myAddress,
-    )
-
-    // Broadcast
-    await this.provider.broadcast(rawHex)
-    console.debug(`flushFungibleToken: broadcast flush TX ${txId}`)
-
-    this.provider.registerPendingTx(txId, spentInputs, changeOutput ?? undefined)
-
-    // Update fungible token state
+    // Mark UTXOs as flushed
     const amountFlushed = utxosToFlush.reduce((sum, u) => sum + u.satoshis, 0)
+    const flushedAt = new Date().toISOString()
+
     for (let i = 0; i < fungible.utxos.length; i++) {
       if (utxoIndexes.includes(i)) {
         fungible.utxos[i].status = 'flushed'
-        fungible.utxos[i].flushTxId = txId
-        fungible.utxos[i].flushedAt = new Date().toISOString()
+        fungible.utxos[i].flushedAt = flushedAt
       }
     }
 
     if (!preserveMetadata) {
-      // Remove flushed UTXOs
+      // Remove flushed UTXOs completely
       fungible.utxos = fungible.utxos.filter((_, i) => !utxoIndexes.includes(i))
       if (fungible.utxos.length === 0) {
         await this.store.deleteFungibleToken(tokenId)
+        console.debug(`flushFungibleToken: deleted entire token ${tokenId} (no UTXOs remain)`)
       } else {
         await this.store.updateFungibleToken(fungible)
+        console.debug(`flushFungibleToken: removed ${utxoIndexes.length} UTXOs from ${tokenId}`)
       }
     } else {
+      // Keep flushed UTXOs with metadata
       await this.store.updateFungibleToken(fungible)
+      console.debug(`flushFungibleToken: marked ${utxoIndexes.length} UTXOs as flushed in ${tokenId}`)
     }
 
     return {
-      txId,
       tokenId,
       amountFlushed,
-      change: changeOutput?.satoshis ?? 0,
+      flushedAt,
     }
   }
 

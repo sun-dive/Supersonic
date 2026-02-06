@@ -1796,14 +1796,12 @@ let flushingTokenId: string | null = null
 
     setResult('transfer-result', [
       'Token flushed!',
-      `TXID: ${result.txId}`,
       `Token ID: ${result.tokenId}`,
-      `Amount: ${result.satoshis} sats`,
-      `View: https://whatsonchain.com/tx/${result.txId}`,
+      `Flushed at: ${result.flushedAt}`,
       '',
       preserveMetadata
-        ? 'Metadata preserved for recovery within 24 hours.'
-        : 'Metadata not preserved. Token cannot be recovered.',
+        ? 'Metadata preserved. Token can be recovered if needed.'
+        : 'Metadata not preserved. Token removed permanently.',
     ].join('\n'))
 
     await refreshTokenList()
@@ -1823,31 +1821,29 @@ let flushingTokenId: string | null = null
 
 ;(window as any)._recoverFlushedToken = async (tokenId: string) => {
   try {
-    const canRecover = await canRecoverToken(tokenId, provider, store)
-    if (!canRecover) {
-      setResult('transfer-result', `Token ${tokenId.slice(0, 12)}... cannot be recovered. Flushed UTXO may have been spent or metadata lost.`)
-      return
-    }
-
-    setText('transfer-result', `Recovering token ${tokenId.slice(0, 12)}...`)
-
     const token = await store.getToken(tokenId)
     if (!token) {
       setResult('transfer-result', 'Token not found in storage')
       return
     }
 
-    // Update token status to recovered
-    token.status = 'recovered'
+    if (token.status !== 'flushed') {
+      setResult('transfer-result', `Token is not in flushed state (current status: ${token.status})`)
+      return
+    }
+
+    setText('transfer-result', `Un-flushing token ${tokenId.slice(0, 12)}...`)
+
+    // Restore token to active status
+    token.status = 'active'
     token.flushedAt = undefined
-    token.flushTxId = undefined
     await store.updateToken(token)
 
     setResult('transfer-result', [
-      'Token recovered!',
+      'Token restored!',
       `Token: ${token.tokenName} (${tokenId.slice(0, 12)}...)`,
-      `Status: Recovered`,
-      'Token has been restored with recovered status.',
+      `Status: Active`,
+      'Token has been restored from flushed state.',
     ].join('\n'))
 
     await refreshTokenList()
@@ -1857,69 +1853,43 @@ let flushingTokenId: string | null = null
 }
 
 ;(window as any)._startRecoveryScan = async () => {
-  setText('transfer-result', 'Scanning for flushed tokens...')
+  // v05.23: Flushing is now internal-only (no blockchain transactions)
+  // This button is kept for backward compatibility but now shows flushed tokens that can be restored
   const resultsDiv = el('recovery-results')
-
   if (!resultsDiv) return
 
   try {
-    const result = await scanAndRecoverFlushedTokens(provider, store, (msg) => {
-      setText('transfer-result', msg)
-    })
+    const tokens = await store.listTokens()
+    const flushedTokens = tokens.filter(t => t.status === 'flushed')
 
-    // Display results
     let html = `<div style="margin-top:12px;border-top:1px solid #30363d;padding-top:12px;">`
 
-    if (result.recovered.length > 0) {
-      html += `<div style="margin-bottom:12px;padding:12px;background:#0d3d1f;border-left:4px solid #238636;border-radius:4px;">
-        <strong style="color:#3fb950;">✓ Recovered: ${result.recovered.length}</strong><br>
-        ${result.recovered.map(t => `
-          <div style="margin-top:6px;font-size:0.9em;">
+    if (flushedTokens.length > 0) {
+      html += `<div style="margin-bottom:12px;padding:12px;background:#3d2d0d;border-left:4px solid #d29922;border-radius:4px;">
+        <strong style="color:#d29922;">⚠ Flushed Tokens: ${flushedTokens.length}</strong><br>
+        <span style="font-size:0.9em;color:#c9d1d9;">These tokens are flushed and can be restored:</span>
+        ${flushedTokens.map(t => `
+          <div style="margin-top:6px;font-size:0.85em;">
             <span style="color:#c9d1d9;">${escHtml(t.tokenName)}</span>
             <code class="muted" style="font-size:0.8em;display:block;">${t.tokenId.slice(0, 20)}...</code>
+            <button onclick="window._recoverFlushedToken('${t.tokenId}')" style="margin-top:4px;font-size:0.75em;background:#238636;">Restore Token</button>
           </div>
         `).join('')}
       </div>`
-    }
-
-    if (result.unspent.length > 0) {
-      html += `<div style="margin-bottom:12px;padding:12px;background:#3d2d0d;border-left:4px solid #d29922;border-radius:4px;">
-        <strong style="color:#d29922;">⚠ Recoverable: ${result.unspent.length}</strong><br>
-        <span style="font-size:0.9em;color:#c9d1d9;">These flushed tokens were found unspent on-chain and can be recovered:</span>
-        ${result.unspent.map(f => `
-          <div style="margin-top:6px;font-size:0.85em;">
-            <div>Block Height: ${f.blockHeight}</div>
-            <code class="muted" style="font-size:0.8em;">${f.flushedTxId.slice(0, 20)}...:${f.satoshis} sat</code>
-            ${f.originalTokenId ? `<button onclick="window._recoverFlushedToken('${f.originalTokenId}')" style="margin-top:4px;font-size:0.75em;">Recover Token</button>` : ''}
-          </div>
-        `).join('')}
-      </div>`
-    }
-
-    if (result.failed.length > 0) {
-      html += `<div style="margin-bottom:12px;padding:12px;background:#3d1a1a;border-left:4px solid #da3633;border-radius:4px;">
-        <strong style="color:#da3633;">✗ Failed: ${result.failed.length}</strong><br>
-        ${result.failed.map(err => `<div style="font-size:0.85em;color:#c9d1d9;margin-top:4px;">${escHtml(err)}</div>`).join('')}
-      </div>`
-    }
-
-    if (result.recovered.length === 0 && result.unspent.length === 0 && result.failed.length === 0) {
+    } else {
       html += `<div style="padding:12px;background:#161b22;border-radius:4px;color:#c9d1d9;">
-        No flushed tokens found on the blockchain.
+        No flushed tokens found.
       </div>`
     }
 
     html += `</div>`
     resultsDiv.innerHTML = html
 
-    setText('transfer-result', [
-      'Recovery scan complete!',
-      `Recovered: ${result.recovered.length}`,
-      `Recoverable (unspent): ${result.unspent.length}`,
-      `Failed: ${result.failed.length}`,
+    setResult('transfer-result', [
+      'Flushed tokens scan complete!',
+      `Found: ${flushedTokens.length}`,
+      'Click "Restore Token" to un-flush any token.',
     ].join('\n'))
-
-    await refreshTokenList()
   } catch (e: any) {
     setResult('transfer-result', `Error scanning for flushed tokens: ${e.message}`)
   }
