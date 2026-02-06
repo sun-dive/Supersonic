@@ -361,9 +361,16 @@ async function refreshTokenList() {
     return db - da
   })
 
-  // Filter out flushed tokens without metadata (no recovery possible)
-  // Keep flushed tokens WITH metadata (flushTxId) so user can recover them
-  tokens = tokens.filter(t => t.status !== 'flushed' || t.flushTxId)
+  // Filter tokens: exclude transferred and flushed-without-recovery
+  // Keep active, pending, pending_transfer, recovered, flushed (with metadata for recovery)
+  tokens = tokens.filter(t => {
+    // Exclude transferred tokens (already sent away)
+    if (t.status === 'transferred') return false
+    // Exclude flushed tokens without metadata (no recovery possible)
+    if (t.status === 'flushed' && !t.flushTxId) return false
+    // Keep everything else
+    return true
+  })
 
   let fungibleTokens = (await store.listFungibleTokens()).sort((a, b) => {
     const da = a.createdAt ? new Date(a.createdAt).getTime() : 0
@@ -1233,6 +1240,26 @@ async function handleVerify() {
   setResult('verify-result', 'Verifying...')
 
   try {
+    // Check token status first
+    const token = await store.getToken(tokenId)
+    const fungible = token ? null : await store.getFungibleToken(tokenId)
+
+    if (token && token.status === 'transferred') {
+      setResult('verify-result', [
+        `Valid: false`,
+        `Reason: This token has been transferred away from your wallet and is no longer in your possession.`,
+      ].join('\n'))
+      return
+    }
+
+    if (fungible && fungible.utxos.every(u => u.status === 'transferred')) {
+      setResult('verify-result', [
+        `Valid: false`,
+        `Reason: All UTXOs of this fungible token have been transferred away.`,
+      ].join('\n'))
+      return
+    }
+
     const result = await builder.verifyToken(tokenId)
     setResult('verify-result', [
       `Valid: ${result.valid}`,
