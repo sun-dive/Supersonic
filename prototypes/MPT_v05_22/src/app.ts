@@ -226,7 +226,7 @@ function init() {
   refreshBalance()
   refreshTokenList()
   silentCheckIncoming()
-  fetchMissingProofs()
+  startProofPolling()
   resumePendingTransferPolls()
 }
 
@@ -244,6 +244,11 @@ async function refreshBalance() {
   silentCheckIncoming()
 }
 
+// ── Adaptive Proof Polling ──────────────────────────────────────
+// Track proof fetch attempts: key = "proofPoll", value = last attempt time
+let lastProofFetchTime = 0
+let proofPollTimeoutId: ReturnType<typeof setTimeout> | null = null
+
 async function fetchMissingProofs() {
   try {
     const count = await builder.fetchMissingProofs()
@@ -254,6 +259,44 @@ async function fetchMissingProofs() {
   } catch {
     // Silent
   }
+}
+
+function scheduleNextProofPoll() {
+  if (proofPollTimeoutId) clearTimeout(proofPollTimeoutId)
+
+  const now = Date.now()
+  const elapsedMs = now - lastProofFetchTime
+  const elapsedMin = elapsedMs / (1000 * 60)
+
+  let nextPollMs: number
+  let statusMsg: string
+
+  if (elapsedMin < 60) {
+    // Within first hour: poll every 1 minute
+    nextPollMs = 60 * 1000
+    statusMsg = `🔄 Polling for proofs every 1 min (${Math.round(elapsedMin)}/${60} min)`
+  } else if (elapsedMin < 1440) {
+    // Between 1-24 hours: poll every 1 hour
+    nextPollMs = 60 * 60 * 1000
+    statusMsg = `🔄 Polling for proofs every 1 hour (${Math.round(elapsedMin)}/${1440} min)`
+  } else {
+    // After 24 hours: stop polling
+    setText('incoming-status', `⏹️ Proof polling stopped (24h elapsed)`)
+    return
+  }
+
+  setText('incoming-status', statusMsg)
+
+  proofPollTimeoutId = setTimeout(async () => {
+    lastProofFetchTime = Date.now()
+    await fetchMissingProofs()
+    scheduleNextProofPoll()
+  }, nextPollMs)
+}
+
+function startProofPolling() {
+  lastProofFetchTime = Date.now()
+  fetchMissingProofs().then(() => scheduleNextProofPoll())
 }
 
 
@@ -302,6 +345,9 @@ async function silentCheckIncoming() {
     if (imported.length > 0) {
       setText('incoming-status', `Auto-imported ${imported.length} token(s)`)
       await refreshTokenList()
+      // Restart proof polling: new tokens may have arrived and need proofs
+      if (proofPollTimeoutId) clearTimeout(proofPollTimeoutId)
+      startProofPolling()
     }
   } catch {
     // Silent
