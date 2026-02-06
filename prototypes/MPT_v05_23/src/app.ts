@@ -367,7 +367,8 @@ async function refreshTokenList() {
     // Exclude transferred tokens (already sent away)
     if (t.status === 'transferred') return false
     // Exclude flushed tokens without metadata (no recovery possible)
-    if (t.status === 'flushed' && !t.flushTxId) return false
+    // flushedAt is set when token is marked as flushed with preserveMetadata=true
+    if (t.status === 'flushed' && !t.flushedAt) return false
     // Keep everything else
     return true
   })
