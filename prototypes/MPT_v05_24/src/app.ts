@@ -553,7 +553,7 @@ function renderFragmentCard(genesisTxId: string, group: OwnedToken[], rules: { s
         <div class="token-field"><span class="label">Attributes:</span> ${attrsDisplay}</div>
         <div class="token-field"><span class="label">Rules:</span> ${renderRules(first.tokenRules)}</div>
         ${isFlushed ? `<div class="token-field"><span class="label">Flushed:</span> <span style="color:#da3633;">${first.flushedAt ? formatDate(first.flushedAt) : 'Yes'}</span></div>` : ''}
-        <div class="token-actions" style="flex-direction:column;align-items:stretch;margin-top:12px;${isFlushed ? 'opacity:0.5;pointer-events:none;' : ''}">
+        <div class="token-actions" style="flex-direction:column;align-items:stretch;margin-top:12px;${isFlushed ? 'opacity:0.6;' : ''}">
           ${heldCount > 0 ? `
           <div class="row" style="gap:6px;">
             <input id="frag-amt-${genKey}" type="number" min="1" max="${heldCount}" value="1" style="width:80px;margin:0;" />
@@ -734,7 +734,7 @@ function renderTokenCard(t: OwnedToken): string {
         ${t.feePaid !== undefined ? `<div class="token-field"><span class="label">Fee:</span> ${t.feePaid} sats</div>` : ''}
         ${t.transferTxId ? `<div class="token-field"><span class="label">Transfer TXID:</span> <code class="selectable">${t.transferTxId}</code></div>` : ''}
         ${isFlushed ? `<div class="token-field"><span class="label">Flushed:</span> <span style="color:#da3633;">${t.flushedAt ? formatDate(t.flushedAt) : 'Yes'}</span></div>` : ''}
-        <div class="token-actions" ${isFlushed ? 'style="opacity:0.5;pointer-events:none;"' : ''}>${actions}</div>
+        <div class="token-actions" ${isFlushed ? 'style="opacity:0.6;"' : ''}>${actions}</div>
       </div>
     </details>`
 }
@@ -1197,6 +1197,10 @@ async function handleTransfer() {
       newStateData = textToHex(messageText)
     }
     const result = await builder.createTransfer(tokenId, recipient, newStateData, fileData)
+
+    // Verify token status was updated in storage
+    const updatedToken = await store.getToken(tokenId)
+    console.debug(`handleTransfer: Token ${tokenId.slice(0,12)} status after createTransfer:`, updatedToken?.status)
 
     // Cache file locally if attached
     if (fileData) {
