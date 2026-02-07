@@ -1,0 +1,17 @@
+{
+  "name": "mpt-v05-22",
+  "version": "0.5.22",
+  "type": "module",
+  "description": "MPT Prototype v05.22 - Merkle Proof Token Wallet (consecutive transfer support via pending UTXO tracking)",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node serve.mjs",
+    "dev": "node serve.mjs"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0"
+  }
+}
