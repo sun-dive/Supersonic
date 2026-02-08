@@ -6,10 +6,16 @@
 !docs/
 !docs/MPT_fundamental_design_principles.md
 !docs/MPT_structure_and_function.md
+!docs/P_fundamental_design_principles.md
+!docs/P_structure_and_function.md
 !docs/bitcoin.pdf
 !docs/bootcamp/
 !docs/bootcamp/**
+!docs/old_docs/
+!docs/old_docs/**
 !prototypes/
+!prototypes/SVphone_v00_00/
+!prototypes/SVphone_v00_00/**
 !prototypes/MPT_v05_20/
 !prototypes/MPT_v05_20/**
 !prototypes/MPT_v05_21/
@@ -20,5 +26,7 @@
 !prototypes/MPT_v05_23/**
 !prototypes/MPT_v05_24/
 !prototypes/MPT_v05_24/**
+!workflows/
+!workflows/**
 !archive/
 !archive/**
