@@ -1,0 +1,17 @@
+{
+  "name": "p-token-v05-25",
+  "version": "0.5.25",
+  "type": "module",
+  "description": "P Token Protocol Prototype v05.25 - Proof Token Wallet (IndexedDB storage)",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node serve.mjs",
+    "dev": "node serve.mjs"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0"
+  }
+}
