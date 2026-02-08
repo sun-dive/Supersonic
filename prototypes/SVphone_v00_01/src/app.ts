@@ -127,7 +127,13 @@ function analyzeStorageUsage() {
 
 async function migrateFromMPT() {
   const MIGRATION_FLAG = 'p:migrated-from-mpt'
-  if (localStorage.getItem(MIGRATION_FLAG)) {
+
+  // Check if migration flag exists OR if p:* keys exist (migration already done)
+  const flagExists = localStorage.getItem(MIGRATION_FLAG)
+  const hasPKeys = Array.from({length: localStorage.length}, (_, i) => localStorage.key(i))
+    .some(key => key?.startsWith('p:wallet:') || key?.startsWith('p:data:'))
+
+  if (flagExists || hasPKeys) {
     console.log('[Migration] Already complete - skipping')
     return
   }
@@ -227,29 +233,18 @@ async function migrateFromMPT() {
   // 6. Final quota analysis
   analyzeStorageUsage()
 
-  // 7. Mark migration complete (with retries for quota issues)
-  let flagSet = false
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      localStorage.setItem(MIGRATION_FLAG, 'true')
-      console.log('[Migration] ✓ Complete! Proof chains in IndexedDB, mpt:* keys cleaned up.')
-      flagSet = true
-      break
-    } catch (e: unknown) {
-      if (e instanceof Error && e.name === 'QuotaExceededError') {
-        console.warn(`[Migration] Quota exceeded (attempt ${attempt + 1}/3), retrying...`)
-        if (attempt === 2) {
-          console.error('[Migration] ✗ CRITICAL: localStorage still too full after cleanup!')
-          console.warn('[Migration] RECOVERY: Run in browser console: localStorage.clear(); location.reload()')
-        }
-      } else {
-        throw e
-      }
+  // 7. Try to set migration flag (not critical if it fails - p:* keys indicate migration done)
+  try {
+    localStorage.setItem(MIGRATION_FLAG, 'true')
+    console.log('[Migration] ✓ Complete! Proof chains in IndexedDB, mpt:* keys cleaned up.')
+  } catch (e: unknown) {
+    if (e instanceof Error && e.name === 'QuotaExceededError') {
+      console.warn('[Migration] ⚠ Could not set flag (quota full), but migration data ready')
+      console.warn('[Migration] Next load will detect migration by checking p:* keys')
+      console.warn('[Migration] OPTIONAL: Clear some storage with: localStorage.clear(); location.reload()')
+    } else {
+      throw e
     }
-  }
-
-  if (!flagSet) {
-    console.error('[Migration] Migration data may be incomplete - wallet may not load properly')
   }
 }
 
