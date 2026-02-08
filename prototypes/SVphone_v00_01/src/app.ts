@@ -86,6 +86,45 @@ function setFileMeta(hash: string, mimeType: string, fileName: string): void {
  * Safe to run multiple times (idempotent).
  * Preserves old keys for safety (user can delete manually later).
  */
+/**
+ * Diagnostic: Analyze localStorage usage to identify what's filling the quota
+ */
+function analyzeStorageUsage() {
+  let totalSize = 0
+  const sizeByPrefix: Record<string, number> = {}
+  const largestKeys: Array<[string, number]> = []
+
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key) continue
+
+    const value = localStorage.getItem(key)
+    const size = (key.length + (value?.length || 0)) * 2 // Rough byte estimate
+
+    totalSize += size
+
+    // Group by prefix
+    const prefix = key.split(':')[0] + ':'
+    sizeByPrefix[prefix] = (sizeByPrefix[prefix] || 0) + size
+
+    // Track largest keys
+    largestKeys.push([key, size])
+  }
+
+  largestKeys.sort((a, b) => b[1] - a[1])
+
+  console.group('[Storage Analysis]')
+  console.log(`Total localStorage used: ~${(totalSize / 1024 / 1024).toFixed(2)}MB`)
+  console.log('By prefix:', Object.fromEntries(
+    Object.entries(sizeByPrefix).map(([k, v]) => [k, `${(v / 1024 / 1024).toFixed(2)}MB`])
+  ))
+  console.log('Top 10 largest keys:')
+  largestKeys.slice(0, 10).forEach(([key, size]) => {
+    console.log(`  ${key.substring(0, 50)}: ${(size / 1024).toFixed(1)}KB`)
+  })
+  console.groupEnd()
+}
+
 async function migrateFromMPT() {
   const MIGRATION_FLAG = 'p:migrated-from-mpt'
   if (localStorage.getItem(MIGRATION_FLAG)) {
@@ -94,6 +133,7 @@ async function migrateFromMPT() {
   }
 
   console.log('[Migration] Starting MPT → P migration...')
+  analyzeStorageUsage()
 
   // 1. Migrate WIF key (CRITICAL - user's wallet)
   const oldWif = localStorage.getItem('mpt:wallet:wif')
@@ -162,9 +202,17 @@ async function migrateFromMPT() {
     console.log(`[Migration] ✓ Migrated ${proofChainsMigrated} proof chains to IndexedDB`)
   }
 
-  // 5. Clean up old localStorage proof chains to free quota (CRITICAL)
+  // 5. Delete ALL old mpt:* keys (CRITICAL - gather them first before modifying length)
+  const allKeysToDelete: string[] = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key && key.startsWith('mpt:')) {
+      allKeysToDelete.push(key)
+    }
+  }
+
   let deletedKeys = 0
-  for (const key of keysToDelete) {
+  for (const key of allKeysToDelete) {
     try {
       localStorage.removeItem(key)
       deletedKeys++
@@ -173,20 +221,35 @@ async function migrateFromMPT() {
     }
   }
   if (deletedKeys > 0) {
-    console.log(`[Migration] ✓ Deleted ${deletedKeys} old proof keys from localStorage (freed quota)`)
+    console.log(`[Migration] ✓ Deleted ${deletedKeys} ALL old mpt:* keys from localStorage (freed quota)`)
   }
 
-  // 6. Mark migration complete (now with freed quota)
-  try {
-    localStorage.setItem(MIGRATION_FLAG, 'true')
-    console.log('[Migration] Complete! Proof chains in IndexedDB, old mpt:* keys cleaned up.')
-  } catch (e: unknown) {
-    if (e instanceof Error && e.name === 'QuotaExceededError') {
-      console.error('[Migration] ✗ CRITICAL: Could not set migration flag - localStorage still full!')
-      console.warn('[Migration] Try: localStorage.clear() in console to recover')
-    } else {
-      throw e
+  // 6. Final quota analysis
+  analyzeStorageUsage()
+
+  // 7. Mark migration complete (with retries for quota issues)
+  let flagSet = false
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      localStorage.setItem(MIGRATION_FLAG, 'true')
+      console.log('[Migration] ✓ Complete! Proof chains in IndexedDB, mpt:* keys cleaned up.')
+      flagSet = true
+      break
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === 'QuotaExceededError') {
+        console.warn(`[Migration] Quota exceeded (attempt ${attempt + 1}/3), retrying...`)
+        if (attempt === 2) {
+          console.error('[Migration] ✗ CRITICAL: localStorage still too full after cleanup!')
+          console.warn('[Migration] RECOVERY: Run in browser console: localStorage.clear(); location.reload()')
+        }
+      } else {
+        throw e
+      }
     }
+  }
+
+  if (!flagSet) {
+    console.error('[Migration] Migration data may be incomplete - wallet may not load properly')
   }
 }
 
