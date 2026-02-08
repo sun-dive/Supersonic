@@ -8,7 +8,7 @@ February 4th, 2026
 
 The Proof Token Protocol (P token protocol) is a token protocol on BSV mainnet that uses P2PKH outputs for ownership and OP_RETURN outputs for metadata. Token validity is proven exclusively through Merkle proofs and block headers (SPV), with no dependency on UTXO lookups, indexers, or trusted third parties for verification.
 
-MPT supports two token modes:
+The P token protocol supports two token modes:
 - **NFT Mode**: Each 1-sat output has a unique Token ID based on its genesis output index. Suitable for non-fungible tokens, collectibles, and divisible token fragments.
 - **Fungible Mode**: All UTXOs share a single Token ID (genesisOutputIndex fixed at 1). Each satoshi equals one token unit. Multiple UTXOs form a "basket" that can be split and merged through transfers.
 
@@ -24,7 +24,7 @@ An P token token is a BSV transaction with a specific output structure. Ownershi
 
 ### Token Modes
 
-MPT v05.10 supports two distinct token modes:
+The P token protocol v05.10 supports two distinct token modes:
 
 **NFT Mode (Original)**
 - Each 1-sat P2PKH output is a unique token with its own Token ID
@@ -114,7 +114,7 @@ Output 2:  Change back to minter (if needed)
 Input 0:   Funding UTXO (signed by minter)
 Output 0:  OP_RETURN with token metadata (0 sat) -- shared token data (attrs = SHA-256 of file)
 Output 1:  P2PKH to minter's address (1 sat) -- the token UTXO
-Output 2:  OP_RETURN with MPT-FILE data (0 sat) -- embedded file (mimeType, fileName, bytes)
+Output 2:  OP_RETURN with P-FILE data (0 sat) -- embedded file (mimeType, fileName, bytes)
 Output 3:  Change back to minter (if needed)
 ```
 
@@ -127,11 +127,11 @@ Output 1:  P2PKH to minter's address (1 sat) -- token #0
 Output 2:  P2PKH to minter's address (1 sat) -- token #1
 ...
 Output N:  P2PKH to minter's address (1 sat) -- token #(N-1)
-Output N+1: OP_RETURN with MPT-FILE data (0 sat) -- if file embedded
+Output N+1: OP_RETURN with P-FILE data (0 sat) -- if file embedded
 Output N+2: Change back to minter (if needed)
 ```
 
-All tokens in a batch share a single OP_RETURN (Output 0) containing identical metadata. Each token is a separate 1-sat P2PKH output at indices 1 through N. The `outputIndex` used in the Token ID is the actual Bitcoin output index (1, 2, ..., N), not a zero-based token number. Token #0 in the set has `outputIndex = 1`. When a file is embedded, the MPT-FILE OP_RETURN is placed after the token P2PKH outputs and before the change output.
+All tokens in a batch share a single OP_RETURN (Output 0) containing identical metadata. Each token is a separate 1-sat P2PKH output at indices 1 through N. The `outputIndex` used in the Token ID is the actual Bitcoin output index (1, 2, ..., N), not a zero-based token number. Token #0 in the set has `outputIndex = 1`. When a file is embedded, the P-FILE OP_RETURN is placed after the token P2PKH outputs and before the change output.
 
 **Genesis TX (mint) -- divisible token (supply = S, divisibility = D):**
 
@@ -145,7 +145,7 @@ Output D:  P2PKH to minter's address (1 sat) -- fragment #D (NFT 1, piece D/D)
 Output D+1: P2PKH to minter's address (1 sat) -- fragment #D+1 (NFT 2, piece 1/D)
 ...
 Output S*D: P2PKH to minter's address (1 sat) -- fragment #S*D (NFT S, piece D/D)
-Output S*D+1: OP_RETURN with MPT-FILE data (0 sat) -- if file embedded
+Output S*D+1: OP_RETURN with P-FILE data (0 sat) -- if file embedded
 Output S*D+2: Change back to minter (if needed)
 ```
 
@@ -221,11 +221,11 @@ Chunk ordering follows enforcement level (highest authority first):
 
 *v05.21:* `genesisOutputIndex` removed from OP_RETURN. Derived from Input 0 of the transfer TX (see Genesis Output Index Derivation section).
 
-**Genesis TX OP_RETURN:** Data chunks [0-6] (7 data chunks). No genesisTxId or proofChainBinary -- not needed at mint time. When a file is embedded, a separate OP_RETURN output with the `MPT-FILE` marker is added to the genesis TX (see Embedded File Data).
+**Genesis TX OP_RETURN:** Data chunks [0-6] (7 data chunks). No genesisTxId or proofChainBinary -- not needed at mint time. When a file is embedded, a separate OP_RETURN output with the `P-FILE` marker is added to the genesis TX (see Embedded File Data).
 
 **Transfer TX OP_RETURN:** Data chunks [0-8] (9 data chunks). genesisTxId and proofChainBinary carry the token's verifiable history. Ownership is determined by the P2PKH output, not by any OP_RETURN field. No file data is included -- only the 32-byte hash in tokenAttributes. *v05.21:* genesisOutputIndex is derived from Input 0 of the transfer TX, not stored in the OP_RETURN.
 
-**Parsing rule:** The chunk count distinguishes genesis from transfer: 7 data chunks = genesis, 9 data chunks = transfer (v05.21). stateData (data chunk [6]) is always present with a minimum of 1 byte to ensure consistent chunk counts. The version byte (`0x02`) signals v05 format with the tokenScript chunk.
+**Parsing rule:** The chunk count distinguishes genesis from transfer: 7 data chunks = genesis, 9 data chunks = transfer (v05.21). stateData (data chunk [6]) is always present with a minimum of 1 byte to ensure consistent chunk counts. The version byte (`0x03`) signals v05 format with the tokenScript chunk.
 
 **Empty tokenScript cost:** When tokenScript is empty (standard P2PKH behaviour), the chunk is a single `OP_0` byte -- adding only 1 byte to the transaction compared to v04.
 
@@ -243,7 +243,7 @@ Chunk ordering follows enforcement level (highest authority first):
 
 ### Encoding Format
 
-MPT uses **raw pushdata chunks** in the OP_RETURN output. Each field is a separate pushdata element in the script, identified by position. This requires no external libraries, schemas, or deserializers -- any Bitcoin library that can parse standard scripts can decode P token metadata.
+The P token protocol uses **raw pushdata chunks** in the OP_RETURN output. Each field is a separate pushdata element in the script, identified by position. This requires no external libraries, schemas, or deserializers -- any Bitcoin library that can parse standard scripts can decode P token metadata.
 
 Compared to other BSV token encodings:
 
@@ -254,7 +254,7 @@ Compared to other BSV token encodings:
 | Indexer required | **No** | Yes | Yes | Partial | Yes |
 | Self-contained TX | **Yes** | Partial | No | No | No |
 
-The zero-dependency parsing aligns with MPT's SPV-only philosophy. The protocol is simple enough that positional encoding isn't a burden.
+The zero-dependency parsing aligns with the P token protocol's SPV-only philosophy. The protocol is simple enough that positional encoding isn't a burden.
 
 ### Token ID
 
@@ -317,33 +317,33 @@ For large stateData, the cleanest mitigation is **hash-only on-chain**: store `S
 
 ### Embedded File Data
 
-MPT supports embedding files (images, text documents, small media) directly in the genesis transaction. The approach is **hash-on-chain, data-in-genesis**:
+The P token protocol supports embedding files (images, text documents, small media) directly in the genesis transaction. The approach is **hash-on-chain, data-in-genesis**:
 
 - **tokenAttributes** stores `SHA-256(fileData)` (32 bytes / 64 hex chars) -- immutable, bound to Token ID.
-- **Full file data** lives in a **second OP_RETURN output** in the genesis TX only, using the `MPT-FILE` format.
+- **Full file data** lives in a **second OP_RETURN output** in the genesis TX only, using the `P-FILE` format.
 - **Transfer TXs** carry only the 32-byte hash in tokenAttributes -- no file bloat on transfers.
 
-#### File OP_RETURN Format (MPT-FILE)
+#### File OP_RETURN Format (P-FILE)
 
 The second OP_RETURN output in a genesis TX with an embedded file:
 
 ```
 Chunk 0:  OP_0
 Chunk 1:  OP_RETURN
-Chunk 2:  "MPT-FILE"       (8 bytes, marker to distinguish from main P token OP_RETURN)
+Chunk 2:  "P-FILE"       (6 bytes, marker to distinguish from main P token OP_RETURN)
 Chunk 3:  mimeType          (UTF-8, e.g. "image/png")
 Chunk 4:  fileName          (UTF-8, original file name)
 Chunk 5:  fileBytes          (raw binary file data)
 ```
 
-The `MPT-FILE` marker (ASCII `0x4d 0x50 0x54 0x2d 0x46 0x49 0x4c 0x45`) distinguishes this output from the main P token metadata OP_RETURN.
+The `P-FILE` marker (ASCII `0x50 0x2d 0x46 0x49 0x4c 0x45`) distinguishes this output from the main P token metadata OP_RETURN.
 
 #### File Verification
 
 To verify the embedded file matches the token:
 
 1. Fetch the genesis TX (by `genesisTxId`)
-2. Scan outputs for an OP_RETURN with the `MPT-FILE` marker
+2. Scan outputs for an OP_RETURN with the `P-FILE` marker
 3. Parse the file data (mimeType, fileName, bytes)
 4. Compute `SHA-256(bytes)` and compare to tokenAttributes
 5. If the hash matches, the file is authentic and bound to the token's identity
@@ -368,7 +368,7 @@ OP_RETURN data is not part of the UTXO set and may be pruned by miners to save s
 
 ## Divisible Tokens / Fractional NFTs
 
-MPT supports splitting whole tokens into numbered fragments via the **divisibility** field in tokenRules. This enables fractional ownership, collectible pieces, and multi-part NFTs.
+The P token protocol supports splitting whole tokens into numbered fragments via the **divisibility** field in tokenRules. This enables fractional ownership, collectible pieces, and multi-part NFTs.
 
 ### Terminology
 
@@ -490,7 +490,7 @@ Output 1:       P2PKH (1 sat) -- fragment #1 (NFT 1, piece 1/D)
 Output 2:       P2PKH (1 sat) -- fragment #2 (NFT 1, piece 2/D)
 ...
 Output S*D:     P2PKH (1 sat) -- fragment #S*D (NFT S, piece D/D)
-Output S*D+1:   OP_RETURN (MPT-FILE, if file embedded)
+Output S*D+1:   OP_RETURN (P-FILE, if file embedded)
 Output S*D+2:   P2PKH (change)
 ```
 
@@ -744,7 +744,7 @@ Standard BSV payment. Token UTXOs are excluded from input selection.
 
 All UTXOs with value <= 1 sat are permanently quarantined and never used as funding inputs. This protects:
 
-- **MPT tokens** (1-sat P2PKH outputs with OP_RETURN metadata)
+- **P tokens** (1-sat P2PKH outputs with OP_RETURN metadata)
 - **Ordinals** (1-sat inscription outputs)
 - **1Sat Ordinals** and other token protocols that use 1-sat UTXOs
 - **Any unknown token type** that may arrive at the wallet address
@@ -933,10 +933,10 @@ Orchestrates all token operations. Coordinates between the wallet provider, toke
 #### createGenesis(params)
 
 1. Fetch safe UTXOs (quarantine applied)
-2. If `fileData` is provided: compute `SHA-256(fileData.bytes)` and use as tokenAttributes; build MPT-FILE OP_RETURN
+2. If `fileData` is provided: compute `SHA-256(fileData.bytes)` and use as tokenAttributes; build P-FILE OP_RETURN
 3. Build main OP_RETURN with token metadata
 4. Compute total outputs: `divisibility > 0 ? supply * divisibility : supply`
-5. Construct TX: funding input -> OP_RETURN + token/fragment outputs (1 sat each) + [MPT-FILE OP_RETURN if file] + change
+5. Construct TX: funding input -> OP_RETURN + token/fragment outputs (1 sat each) + [P-FILE OP_RETURN if file] + change
 6. Sign and broadcast
 7. Compute token ID from TX hash for each output (1 through totalOutputs)
 8. Store each token/fragment with empty proof chain
@@ -1042,7 +1042,7 @@ Polls WoC for a Merkle proof on a transfer TX. Uses 60-second intervals (after a
 
 #### fetchFileFromGenesis(genesisTxId, expectedHash)
 
-Fetches the full genesis TX, scans outputs for an MPT-FILE OP_RETURN, extracts the file data, and verifies `SHA-256(bytes) === expectedHash`. Returns `{ mimeType, fileName, bytes }` or `null` if not found or hash mismatch.
+Fetches the full genesis TX, scans outputs for a P-FILE OP_RETURN, extracts the file data, and verifies `SHA-256(bytes) === expectedHash`. Returns `{ mimeType, fileName, bytes }` or `null` if not found or hash mismatch.
 
 #### fetchMissingProofs()
 
@@ -1162,7 +1162,7 @@ The mode toggle switches between `fungible-fields` and `nft-fields` divs in the 
 When "View File" is clicked on a token card:
 
 1. **IndexedDB cache check** -- returns instantly if cached
-2. **Genesis TX fetch** -- fetches the full genesis TX from WoC, scans for the MPT-FILE OP_RETURN, verifies the hash
+2. **Genesis TX fetch** -- fetches the full genesis TX from WoC, scans for the P-FILE OP_RETURN, verifies the hash
 3. **Pruning recovery prompt** -- if the genesis TX is unavailable, prompts the user to upload the original file; computes SHA-256 and compares to the stored hash; caches on match
 
 Display modes:
@@ -1210,9 +1210,9 @@ Usage: `node serve.mjs` then open `http://localhost:3000`
 | `BYTES_PER_P2PKH_OUTPUT` | 34 | P2PKH output (value + script) |
 | `TX_OVERHEAD` | 10 | Version + locktime + varint |
 | `MIN_REQUEST_DELAY` | 350 | Milliseconds between WoC API calls |
-| `MPT_PREFIX` | `[0x4d, 0x50, 0x54]` | "P" in ASCII |
-| `MPT_VERSION` | `0x02` | Protocol version byte (v05) |
-| `MPT_FILE_MARKER` | `[0x4d, 0x50, 0x54, 0x2d, 0x46, 0x49, 0x4c, 0x45]` | "MPT-FILE" in ASCII, marks file OP_RETURN outputs |
+| `P_PREFIX` | `[0x50]` | "P" in ASCII |
+| `P_VERSION` | `0x03` | Protocol version byte (v05) |
+| `P_FILE_MARKER` | `[0x50, 0x2d, 0x46, 0x49, 0x4c, 0x45]` | "P-FILE" in ASCII, marks file OP_RETURN outputs |
 
 ---
 

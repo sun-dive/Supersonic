@@ -135,14 +135,14 @@ export class TokenBuilder {
    *
    * ALL 1-sat UTXOs are permanently quarantined -- never spent as
    * funding inputs. A 1-sat UTXO is almost certainly a token of
-   * some kind (MPT, Ordinal, 1Sat Ordinals, etc.) and destroying
+   * some kind (P token, Ordinal, 1Sat Ordinals, etc.) and destroying
    * it by using it as a funding input is irreversible.
    *
    * The only code path that spends a 1-sat UTXO is createTransfer(),
    * which explicitly spends it as Input 0 when the user chooses to
    * transfer a specific known token.
    *
-   * For any quarantined 1-sat UTXOs that contain MPT OP_RETURN data
+   * For any quarantined 1-sat UTXOs that contain P token OP_RETURN data
    * addressed to this wallet, we auto-import them into the token store.
    */
   private async getSafeUtxos(): Promise<Utxo[]> {
@@ -151,7 +151,7 @@ export class TokenBuilder {
 
     for (const u of utxos) {
       if (u.satoshis <= TOKEN_SATS) {
-        // Quarantined: attempt MPT auto-import in background, but
+        // Quarantined: attempt P token auto-import in background, but
         // never allow spending regardless of result
         this.tryAutoImport(u).catch(() => {})
         continue
@@ -323,7 +323,7 @@ export class TokenBuilder {
   }
 
   /**
-   * Check if a quarantined UTXO is an incoming MPT token and
+   * Check if a quarantined UTXO is an incoming P token and
    * auto-import it into the store if so. Fire-and-forget.
    */
   private async tryAutoImport(u: Utxo): Promise<void> {
@@ -333,7 +333,7 @@ export class TokenBuilder {
 
     const tx = await this.provider.getSourceTransaction(u.txId)
 
-    // Find the MPT OP_RETURN output and check for a P2PKH output paying to us
+    // Find the P token OP_RETURN output and check for a P2PKH output paying to us
     let opData: TokenOpReturnData | null = null
     let opReturnIndex = -1
     let hasP2pkhToUs = false
@@ -1218,12 +1218,20 @@ export class TokenBuilder {
     }
 
     onStatus?.(`Scanning ${allTxIds.length} transactions...`)
-    console.debug(`checkIncoming: my address = ${this.myAddress}`)
-    console.debug(`checkIncoming: NFT TXs=${nftTxIds.size}, knownFungibleUtxos=${knownFungibleUtxos.size}, txsWithPotentialNew=${txsWithPotentialNewUtxos.size}`)
+    console.log(`[checkIncoming] ⚠️ DETAILED SCAN START`)
+    console.log(`[checkIncoming] Wallet address: ${this.myAddress}`)
+    console.log(`[checkIncoming] Total transactions to scan: ${allTxIds.length}`)
+    console.log(`[checkIncoming] Known NFT TXs: ${nftTxIds.size}`)
+    console.log(`[checkIncoming] Known fungible UTXOs: ${knownFungibleUtxos.size}`)
+    console.log(`[checkIncoming] TXs with potential new UTXOs: ${txsWithPotentialNewUtxos.size}`)
+    console.log(`[checkIncoming] Existing tokens: ${existingTokens.length}, Existing fungible: ${existingFungibleTokens.length}`)
 
+    let scannedCount = 0
+    let skippedCount = 0
     for (const txId of allTxIds) {
       // Skip if it's a known NFT TX AND doesn't have potential new fungible UTXOs
       if (nftTxIds.has(txId) && !txsWithPotentialNewUtxos.has(txId)) {
+        skippedCount++
         console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (known NFT TX, no new UTXOs)`)
         continue
       }
@@ -1232,15 +1240,19 @@ export class TokenBuilder {
         // This TX only has UTXOs we already know about
         const hasUnknownUtxo = utxos.some(u => u.txId === txId && !knownFungibleUtxos.has(`${u.txId}:${u.outputIndex}`))
         if (!hasUnknownUtxo) {
+          skippedCount++
           console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (all UTXOs already known)`)
           continue
         }
       }
 
+      scannedCount++
+      console.log(`[checkIncoming] Processing TX ${scannedCount}/38: ${txId.slice(0, 12)}...`)
       try {
         const tx = await this.provider.getSourceTransaction(txId)
+        console.log(`[checkIncoming] ✓ Fetched: ${tx.outputs.length} outputs`)
 
-        // Find MPT OP_RETURN and ALL P2PKH outputs paying to us
+        // Find P token OP_RETURN and ALL P2PKH outputs paying to us
         let opData: TokenOpReturnData | null = null
         const p2pkhOutputIndices: number[] = []
         const p2pkhOutputsWithSats: { index: number; sats: number }[] = []
@@ -1257,7 +1269,7 @@ export class TokenBuilder {
           const decoded = decodeOpReturn(output.lockingScript as LockingScript)
           if (decoded) {
             opData = decoded
-            console.debug(`checkIncoming: ${txId.slice(0, 12)}... output[${i}] = MPT OP_RETURN "${decoded.tokenName}" (isTransfer=${decoded.genesisTxId != null})`)
+            console.debug(`checkIncoming: ${txId.slice(0, 12)}... output[${i}] = P OP_RETURN "${decoded.tokenName}" (isTransfer=${decoded.genesisTxId != null})`)
             continue
           }
 
@@ -1269,7 +1281,7 @@ export class TokenBuilder {
               // Compute hash and store metadata in localStorage for UI display
               const hashBytes = Hash.sha256(Array.from(fileData.bytes))
               const fileHash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
-              const FILE_META_KEY = 'mpt:fileMeta'
+              const FILE_META_KEY = 'p:fileMeta'
               try {
                 const data = JSON.parse(localStorage.getItem(FILE_META_KEY) || '{}')
                 data[fileHash] = { mimeType: fileData.mimeType, fileName: fileData.fileName }
@@ -1282,14 +1294,19 @@ export class TokenBuilder {
             }
 
             const chunks = (output.lockingScript as LockingScript).chunks
-            console.debug(`checkIncoming: ${txId.slice(0, 12)}... output[${i}] looks like OP_RETURN but decode failed. chunks=${chunks.length}, chunk ops=[${chunks.slice(0, 5).map((c: any) => c.op.toString(16)).join(',')}]`)
+            console.debug(`checkIncoming: ${txId.slice(0, 12)}... output[${i}] looks like OP_RETURN but decode failed. chunks=${chunks.length}`)
             if (chunks.length >= 3) {
               const prefixData = chunks[2]?.data ?? []
-              console.debug(`checkIncoming:   chunk[2] data=[${prefixData.slice(0, 5).join(',')}] (expecting 77,80,84 = "MPT")`)
+              const prefixStr = prefixData.length === 1 ? String.fromCharCode(prefixData[0]) : Array.from(prefixData).slice(0, 3).map(b => String.fromCharCode(b)).join('')
+              console.debug(`checkIncoming:   chunk[2] (prefix): [${prefixData.slice(0, 10).join(',')}] = "${prefixStr}" (len=${prefixData.length})`)
             }
             if (chunks.length >= 4) {
               const versionData = chunks[3]?.data ?? []
-              console.debug(`checkIncoming:   chunk[3] data=[${versionData.join(',')}] (expecting [1])`)
+              console.debug(`checkIncoming:   chunk[3] (version): [${versionData.join(',')}] (len=${versionData.length})`)
+            }
+            if (chunks.length >= 5) {
+              const nameData = chunks[4]?.data ?? []
+              console.debug(`checkIncoming:   chunk[4] (name): ${nameData.length} bytes`)
             }
           }
 
@@ -1560,6 +1577,7 @@ export class TokenBuilder {
       }
     }
 
+    console.log(`[checkIncoming] ✓ SCAN COMPLETE: Scanned=${scannedCount}, Skipped=${skippedCount}, Imported=${imported.length}`)
     onStatus?.(imported.length > 0
       ? `Done! Imported ${imported.length} token(s).`
       : 'No new incoming tokens found.')
