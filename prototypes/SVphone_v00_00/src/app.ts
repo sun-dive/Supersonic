@@ -110,6 +110,7 @@ async function migrateFromMPT() {
 
   // 3. Migrate all token data (token:*, proof:*, fungible:*)
   let migratedKeys = 0
+  let skippedKeys = 0
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i)
     if (!key || !key.startsWith('mpt:data:')) continue
@@ -117,11 +118,23 @@ async function migrateFromMPT() {
     const value = localStorage.getItem(key)
     if (value) {
       const newKey = key.replace(/^mpt:data:/, 'p:data:')
-      localStorage.setItem(newKey, value)
-      migratedKeys++
+      try {
+        localStorage.setItem(newKey, value)
+        migratedKeys++
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === 'QuotaExceededError') {
+          console.warn(`[Migration] ⚠ Skipped large key (quota exceeded): ${key.substring(0, 40)}...`)
+          skippedKeys++
+        } else {
+          throw e
+        }
+      }
     }
   }
   console.log(`[Migration] ✓ Migrated ${migratedKeys} token/proof keys`)
+  if (skippedKeys > 0) {
+    console.warn(`[Migration] ⚠ ${skippedKeys} keys skipped due to storage quota (they will remain in old mpt: keys)`)
+  }
 
   // 4. Mark migration complete
   localStorage.setItem(MIGRATION_FLAG, 'true')
