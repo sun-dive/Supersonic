@@ -1,10 +1,11 @@
 /**
- * Token persistence layer using localStorage.
+ * Token persistence layer using localStorage for metadata and IndexedDB for proof chains.
  *
- * Stores OwnedToken metadata and ProofChain data separately,
- * keyed by token ID.
+ * Stores OwnedToken metadata in localStorage (small data).
+ * Stores ProofChain data in IndexedDB (large data, avoids quota issues).
  */
 import type { ProofChain } from './tokenProtocol'
+import { ProofChainCache } from './fileCache'
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -90,13 +91,17 @@ const PROOF_KEY = 'proof:'
 const FUNGIBLE_KEY = 'fungible:'
 
 export class TokenStore {
-  constructor(private storage: StorageBackend) {}
+  constructor(
+    private storage: StorageBackend,
+    private proofChainCache: ProofChainCache = new ProofChainCache()
+  ) {}
 
-  /** Store token and its proof chain separately but with matching keys for consistent lookups. */
+  /** Store token metadata in localStorage and proof chain in IndexedDB. */
   async addToken(token: OwnedToken, proofChain: ProofChain): Promise<void> {
-    // Dual keys: 'token:' + tokenId and 'proof:' + tokenId keep metadata and proof in sync
+    // Token metadata stays in localStorage (small)
     await this.storage.set(TOKEN_KEY + token.tokenId, JSON.stringify(token))
-    await this.storage.set(PROOF_KEY + token.tokenId, JSON.stringify(proofChain))
+    // Proof chain moves to IndexedDB (large, avoids quota issues)
+    await this.proofChainCache.store(token.tokenId, JSON.stringify(proofChain))
   }
 
   async getToken(tokenId: string): Promise<OwnedToken | null> {
@@ -108,7 +113,12 @@ export class TokenStore {
   }
 
   async getProofChain(tokenId: string): Promise<ProofChain | null> {
-    const data = await this.storage.get(PROOF_KEY + tokenId)
+    // Try IndexedDB first (v05.25+), then localStorage (fallback for v05.24 data)
+    let data = await this.proofChainCache.get(tokenId)
+    if (!data) {
+      // Fallback to localStorage for backwards compatibility
+      data = await this.storage.get(PROOF_KEY + tokenId)
+    }
     return data ? JSON.parse(data) : null
   }
 
@@ -117,7 +127,10 @@ export class TokenStore {
   }
 
   async removeToken(tokenId: string): Promise<void> {
+    // Remove from both localStorage and IndexedDB
     await this.storage.delete(TOKEN_KEY + tokenId)
+    await this.proofChainCache.delete(tokenId)
+    // Also try to remove from old localStorage storage (backwards compat)
     await this.storage.delete(PROOF_KEY + tokenId)
   }
 
@@ -149,8 +162,9 @@ export class TokenStore {
   // ─── Fungible Token Methods ──────────────────────────────────────
 
   async addFungibleToken(token: FungibleToken, proofChain: ProofChain): Promise<void> {
+    // Fungible token metadata in localStorage, proof chain in IndexedDB
     await this.storage.set(FUNGIBLE_KEY + token.tokenId, JSON.stringify(token))
-    await this.storage.set(PROOF_KEY + token.tokenId, JSON.stringify(proofChain))
+    await this.proofChainCache.store(token.tokenId, JSON.stringify(proofChain))
   }
 
   async getFungibleToken(tokenId: string): Promise<FungibleToken | null> {

@@ -16,18 +16,36 @@ const DB_NAME = 'p-files'
 const STORE_NAME = 'files'
 const DB_VERSION = 1
 
-export class FileCache {
-  private dbPromise: Promise<IDBDatabase>
+// Shared database instance for both files and proof chains
+let sharedDbPromise: Promise<IDBDatabase> | null = null
 
-  constructor() {
-    this.dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION)
-      req.onupgradeneeded = () => {
-        req.result.createObjectStore(STORE_NAME, { keyPath: 'hash' })
+function getSharedDb(): Promise<IDBDatabase> {
+  if (!sharedDbPromise) {
+    sharedDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION + 1) // Bump version to add proof store
+      req.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result
+        // Create file store if it doesn't exist
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'hash' })
+        }
+        // Create proof store if it doesn't exist
+        if (!db.objectStoreNames.contains('proofs')) {
+          db.createObjectStore('proofs', { keyPath: 'tokenId' })
+        }
       }
       req.onsuccess = () => resolve(req.result)
       req.onerror = () => reject(req.error)
     })
+  }
+  return sharedDbPromise
+}
+
+export class FileCache {
+  private dbPromise: Promise<IDBDatabase>
+
+  constructor() {
+    this.dbPromise = getSharedDb()
   }
 
   async store(hash: string, data: { mimeType: string; fileName: string; bytes: Uint8Array }): Promise<void> {
@@ -46,6 +64,66 @@ export class FileCache {
       const tx = db.transaction(STORE_NAME, 'readonly')
       const req = tx.objectStore(STORE_NAME).get(hash)
       req.onsuccess = () => resolve(req.result ?? null)
+      req.onerror = () => reject(req.error)
+    })
+  }
+}
+
+/**
+ * IndexedDB-backed proof chain cache.
+ * Stores large proof chain data that would exceed localStorage quota.
+ */
+export interface CachedProofChain {
+  tokenId: string
+  data: string // JSON-serialized ProofChain
+}
+
+export class ProofChainCache {
+  private dbPromise: Promise<IDBDatabase>
+
+  constructor() {
+    this.dbPromise = getSharedDb()
+  }
+
+  async store(tokenId: string, proofChainJson: string): Promise<void> {
+    const db = await this.dbPromise
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('proofs', 'readwrite')
+      tx.objectStore('proofs').put({ tokenId, data: proofChainJson })
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  }
+
+  async get(tokenId: string): Promise<string | null> {
+    const db = await this.dbPromise
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('proofs', 'readonly')
+      const req = tx.objectStore('proofs').get(tokenId)
+      req.onsuccess = () => {
+        const result = req.result as CachedProofChain | undefined
+        resolve(result?.data ?? null)
+      }
+      req.onerror = () => reject(req.error)
+    })
+  }
+
+  async delete(tokenId: string): Promise<void> {
+    const db = await this.dbPromise
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('proofs', 'readwrite')
+      tx.objectStore('proofs').delete(tokenId)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  }
+
+  async listAll(): Promise<string[]> {
+    const db = await this.dbPromise
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('proofs', 'readonly')
+      const req = tx.objectStore('proofs').getAllKeys()
+      req.onsuccess = () => resolve((req.result as string[]) ?? [])
       req.onerror = () => reject(req.error)
     })
   }

@@ -14,7 +14,7 @@ import { WalletProvider } from './walletProvider'
 import { TokenBuilder } from './tokenBuilder'
 import { TokenStore, LocalStorageBackend, OwnedToken, FungibleToken } from './tokenStore'
 import { decodeTokenRules } from './opReturnCodec'
-import { FileCache } from './fileCache'
+import { FileCache, ProofChainCache } from './fileCache'
 
 // ─── Globals ────────────────────────────────────────────────────────
 
@@ -22,6 +22,7 @@ let provider: WalletProvider
 let builder: TokenBuilder
 let store: TokenStore
 let fileCache: FileCache
+let proofChainCache: ProofChainCache
 let fieldModes: Record<string, 'text' | 'hex'> = {
   name: 'text',
   attrs: 'text',
@@ -108,39 +109,66 @@ async function migrateFromMPT() {
     console.log('[Migration] ✓ Migrated file metadata')
   }
 
-  // 3. Migrate all token data (token:*, proof:*, fungible:*)
-  let migratedKeys = 0
-  let skippedKeys = 0
+  // 3. Migrate token metadata (token:*, fungible:*) to localStorage
+  let migratedTokenKeys = 0
+  const proofChainData: Record<string, string> = {} // Store for step 4
+
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i)
     if (!key || !key.startsWith('mpt:data:')) continue
 
     const value = localStorage.getItem(key)
     if (value) {
+      // Check if this is a proof chain (large data) or token metadata (small data)
+      const isProofChain = key.startsWith('mpt:data:proof:')
       const newKey = key.replace(/^mpt:data:/, 'p:data:')
-      try {
-        localStorage.setItem(newKey, value)
-        migratedKeys++
-      } catch (e: unknown) {
-        if (e instanceof Error && e.name === 'QuotaExceededError') {
-          console.warn(`[Migration] ⚠ Skipped large key (quota exceeded): ${key.substring(0, 40)}...`)
-          skippedKeys++
-        } else {
-          throw e
+
+      if (isProofChain) {
+        // Store proof chains for step 4 (move to IndexedDB)
+        const tokenId = key.replace('mpt:data:proof:', '')
+        proofChainData[tokenId] = value
+      } else {
+        // Migrate token metadata to localStorage
+        try {
+          localStorage.setItem(newKey, value)
+          migratedTokenKeys++
+        } catch (e: unknown) {
+          if (e instanceof Error && e.name === 'QuotaExceededError') {
+            console.warn(`[Migration] ⚠ Skipped key (quota exceeded): ${key.substring(0, 40)}...`)
+          } else {
+            throw e
+          }
         }
       }
     }
   }
-  console.log(`[Migration] ✓ Migrated ${migratedKeys} token/proof keys`)
-  if (skippedKeys > 0) {
-    console.warn(`[Migration] ⚠ ${skippedKeys} keys skipped due to storage quota (they will remain in old mpt: keys)`)
+  console.log(`[Migration] ✓ Migrated ${migratedTokenKeys} token metadata keys`)
+
+  // 4. Move proof chains to IndexedDB (large data, avoids localStorage quota)
+  let proofChainsMigrated = 0
+  for (const [tokenId, proofJson] of Object.entries(proofChainData)) {
+    try {
+      await proofChainCache.store(tokenId, proofJson)
+      proofChainsMigrated++
+    } catch (e: unknown) {
+      console.warn(`[Migration] ⚠ Failed to store proof chain in IndexedDB: ${tokenId}`)
+    }
+  }
+  if (proofChainsMigrated > 0) {
+    console.log(`[Migration] ✓ Migrated ${proofChainsMigrated} proof chains to IndexedDB`)
   }
 
-  // 4. Mark migration complete
-  localStorage.setItem(MIGRATION_FLAG, 'true')
-  console.log('[Migration] Complete! Old mpt:* keys preserved for safety.')
-
-  // Note: Old keys are NOT deleted - user can remove manually if desired
+  // 5. Mark migration complete
+  try {
+    localStorage.setItem(MIGRATION_FLAG, 'true')
+    console.log('[Migration] Complete! Proof chains in IndexedDB, old mpt:* keys preserved.')
+  } catch (e: unknown) {
+    if (e instanceof Error && e.name === 'QuotaExceededError') {
+      console.warn('[Migration] ⚠ Could not set migration flag (quota exceeded), but migration data is ready')
+    } else {
+      throw e
+    }
+  }
 }
 
 /**
@@ -201,9 +229,9 @@ function init() {
   const address = key.toAddress()
   provider = new WalletProvider(address)
   const storage = new LocalStorageBackend('p:data:')
-  store = new TokenStore(storage)
+  // Caches already initialized in boot sequence
+  store = new TokenStore(storage, proofChainCache)
   builder = new TokenBuilder(provider, store, key)
-  fileCache = new FileCache()
 
   // Migrate: copy token-level stateData to UTXOs that don't have it
   migrateFungibleStateData()
@@ -1997,7 +2025,14 @@ let flushingTokenId: string | null = null
 // ─── Boot ───────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Initialize caches early for migration
+  fileCache = new FileCache()
+  proofChainCache = new ProofChainCache()
+
+  // Run storage migrations (before init)
   await migrateFromMPT()
+
+  // Initialize wallet and other components
   init()
 })
 

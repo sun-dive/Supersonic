@@ -1,3 +1,55 @@
+# P Token Protocol Prototype v05.25 - Changelog
+
+## Storage Optimization: Proof Chains to IndexedDB (v05.25)
+
+This release solves the **localStorage quota exceeded error** by migrating proof chains from localStorage to IndexedDB.
+
+### Problem Solved
+
+- **Issue**: Edge browser (and other browsers) hitting 5-10MB localStorage quota when users had many tokens with large proof chains
+- **Error**: `QuotaExceededError: Setting the value exceeded the quota` when loading wallet
+- **Root cause**: Proof chains (binary Merkle proof data) are large and were being stored in the limited localStorage quota
+
+### Solution: IndexedDB Storage for Proof Chains
+
+**Storage Architecture (v05.25):**
+- **localStorage** (5-10MB quota): Token metadata, wallet WIF, file metadata (small)
+- **IndexedDB** (50MB+ quota): Proof chains (large binary data)
+
+**Key Changes:**
+- New `ProofChainCache` class in `fileCache.ts` for IndexedDB proof storage
+- TokenStore updated to use IndexedDB for `getProofChain()` / `setProofChain()` operations
+- Automatic migration on first load after v05.24 → v05.25 upgrade:
+  - Proof chains (`p:data:proof:*`) moved from localStorage to IndexedDB
+  - Token metadata (`p:data:token:*`, `p:data:fungible:*`) remains in localStorage
+  - Migration gracefully handles quota errors
+- Backward compatibility: TokenStore falls back to localStorage if proof not found in IndexedDB (for v05.24 data)
+
+**Benefits:**
+- ✅ Solves Edge browser quota exceeded errors
+- ✅ 10x more storage available for proof chains (50MB vs 5MB)
+- ✅ Better performance (IndexedDB is optimized for large objects)
+- ✅ Small metadata stays in fast localStorage
+- ✅ Automatic migration, no user action needed
+- ✅ Backward compatible with v05.24 wallets
+
+### Technical Details
+
+**IndexedDB Structure:**
+```
+Database: p-files
+  Store: files (existing - embedded file data)
+  Store: proofs (new - Merkle proof chains)
+```
+
+**Storage Distribution:**
+- Token ID: 64 hex chars (~32 bytes)
+- Token metadata: ~500-2000 bytes per token
+- Proof chain: 1-50KB+ per token (grows with transfers)
+- Example: 100 tokens with 10KB avg proof = 1MB in IndexedDB (vs localStorage quota exceeded)
+
+---
+
 # P Token Protocol Prototype v05.24 - Changelog
 
 ## BREAKING CHANGE: MPT → P Protocol Refactor (v05.24)
