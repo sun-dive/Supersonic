@@ -860,67 +860,28 @@ function renderHexField(hex: string, token?: OwnedToken): string {
 function renderStateData(stateHex: string, token?: OwnedToken): string {
   if (!stateHex || stateHex === '00') return '<span class="muted">(empty)</span>'
 
-  // DEBUG: Log stateData length for message truncation investigation
-  if (stateHex.length > 200) {
-    console.debug(`renderStateData: stateHex length=${stateHex.length}, first 100 chars: ${stateHex.substring(0, 100)}..., last 100 chars: ...${stateHex.substring(Math.max(0, stateHex.length - 100))}`)
+  // Decode using new delimiter format
+  const { text, fileHash } = decodeStateData(stateHex)
+
+  let html = ''
+
+  // Show decoded text if present
+  if (text) {
+    html += `"${escHtml(text)}"<br>`
   }
 
-  // Check for combined message+file format: message_hex + file_hash (64 chars)
-  // If stateHex > 64 chars, try to detect combined format (with or without metadata)
-  if (stateHex.length > 64 && token) {
-    const possibleHash = stateHex.slice(-64)
-    const possibleMsgHex = stateHex.slice(0, -64)
-
-    // Check if last 64 chars look like valid hex (potential file hash)
-    const looksLikeHash = /^[0-9a-f]{64}$/i.test(possibleHash)
-
-    if (looksLikeHash) {
-      // Try to decode the message portion as UTF-8
-      let msgPreview = ''
-      let msgDecoded = false
-      try {
-        const bytes = new Uint8Array(possibleMsgHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
-        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-        console.debug(`renderStateData: Decoded message from ${possibleMsgHex.length} hex chars (${bytes.length} bytes): "${decoded}"`)
-        // If TextDecoder succeeded, the text is valid UTF-8 - display it
-        msgPreview = `"${escHtml(decoded)}"<br>`
-        msgDecoded = true
-        console.debug(`renderStateData: Message decoded successfully, displaying it`)
-      } catch (e) {
-        console.debug(`renderStateData: Failed to decode message as UTF-8:`, e)
-      }
-
-      // If message decoded successfully, this is likely combined format
-      if (msgDecoded) {
-        const meta = getFileMeta(possibleHash)
-        const icon = meta ? getMimeTypeIcon(meta.mimeType) : '\u{1F4CE}'
-        const label = meta ? `${icon} ${meta.fileName}` : `${icon} View File`
-        return `${msgPreview}<code class="muted">${escHtml(possibleMsgHex)}</code><br><button onclick="window._viewFile('${token.genesisTxId}', '${possibleHash}', '${token.currentTxId}')" style="font-size:0.8em; padding:2px 8px; background:#30363d; margin-top:4px;">${label}</button>`
-      }
-    }
+  // Show file button if hash present
+  if (fileHash && token) {
+    const meta = getFileMeta(fileHash)
+    const icon = meta ? getMimeTypeIcon(meta.mimeType) : '\u{1F4CE}'
+    const label = meta ? `${icon} ${meta.fileName}` : `${icon} View File`
+    html += `<button onclick="window._viewFile('${token.genesisTxId}', '${fileHash}', '${token.currentTxId}')" style="font-size:0.8em; padding:2px 8px; background:#30363d; margin-top:4px;">${label}</button><br>`
   }
 
-  // 64 hex chars = 32 bytes = possible SHA-256 file hash (from transfer with file only)
-  if (stateHex.length === 64 && token) {
-    const meta = getFileMeta(stateHex)
-    if (meta) {
-      const icon = getMimeTypeIcon(meta.mimeType)
-      const label = `${icon} ${meta.fileName}`
-      return `<code class="muted">${escHtml(stateHex)}</code> <button onclick="window._viewFile('${token.genesisTxId}', '${stateHex}', '${token.currentTxId}')" style="font-size:0.8em; padding:2px 8px; background:#30363d;">${label}</button>`
-    }
-    // 64 chars but no metadata - might still be a file hash, show generic button
-    return `<code class="muted">${escHtml(stateHex)}</code> <button onclick="window._viewFile('${token.genesisTxId}', '${stateHex}', '${token.currentTxId}')" style="font-size:0.8em; padding:2px 8px; background:#30363d;">\u{1F4CE} View File</button>`
-  }
+  // Always show raw hex for debugging
+  html += `<code class="muted">${escHtml(stateHex)}</code>`
 
-  // Try to decode as UTF-8 text
-  let textPreview = ''
-  try {
-    const bytes = new Uint8Array(stateHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
-    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    // If TextDecoder succeeded, the text is valid UTF-8 - display it
-    textPreview = `"${escHtml(decoded)}"<br>`
-  } catch { /* not valid UTF-8 */ }
-  return `${textPreview}<code class="muted">${escHtml(stateHex)}</code>`
+  return html
 }
 
 async function handleSend() {
@@ -993,16 +954,103 @@ function textToHex(text: string): string {
     .map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** Try to decode hex as UTF-8 text, return original hex if not valid text */
+/**
+ * Encode stateData with pipe delimiter between text and file hash.
+ * Format: <text>|<fileHash> or |<fileHash> or <text>
+ * Escapes | in text as ~|~
+ */
+function encodeStateData(text: string, fileHash?: string): string {
+  // Escape all pipes in text
+  const escapedText = text.replace(/\|/g, '~|~')
+  const encodedText = escapedText ? textToHex(escapedText) : ''
+
+  if (fileHash) {
+    // Both text and file, or file only
+    return encodedText ? `${encodedText}|${fileHash}` : `|${fileHash}`
+  }
+
+  // Text only (no pipe)
+  return encodedText
+}
+
+/**
+ * Decode stateData with pipe delimiter.
+ * Returns { text, fileHash? } where text is unescaped UTF-8
+ */
+function decodeStateData(stateHex: string): { text: string; fileHash?: string } {
+  if (!stateHex || stateHex === '00') {
+    return { text: '' }
+  }
+
+  // Split at first unescaped pipe using negative lookbehind/lookahead
+  // Pattern: | not preceded or followed by ~
+  const parts = stateHex.split(/(?<!~)\|(?!~)/)
+
+  if (parts.length === 1) {
+    // No pipe found - text only
+    try {
+      const bytes = new Uint8Array(stateHex.match(/.{2}/g)?.map(b => parseInt(b, 16)) || [])
+      let decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      // Unescape ~|~ back to |
+      decoded = decoded.replace(/~\|~/g, '|')
+      return { text: decoded }
+    } catch {
+      return { text: '' }
+    }
+  }
+
+  if (parts.length === 2) {
+    // Found delimiter: parts[0] = text (may be empty), parts[1] = file hash
+    const textHex = parts[0]
+    const fileHash = parts[1]
+
+    // Validate file hash (must be 64 hex chars)
+    if (!/^[0-9a-f]{64}$/i.test(fileHash)) {
+      // Invalid hash format, treat entire string as text
+      try {
+        const bytes = new Uint8Array(stateHex.match(/.{2}/g)?.map(b => parseInt(b, 16)) || [])
+        let decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+        decoded = decoded.replace(/~\|~/g, '|')
+        return { text: decoded }
+      } catch {
+        return { text: '' }
+      }
+    }
+
+    // Decode text portion (if any)
+    let text = ''
+    if (textHex) {
+      try {
+        const bytes = new Uint8Array(textHex.match(/.{2}/g)?.map(b => parseInt(b, 16)) || [])
+        let decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+        // Unescape ~|~ back to |
+        text = decoded.replace(/~\|~/g, '|')
+      } catch {
+        // Ignore decode errors for text portion
+      }
+    }
+
+    return { text, fileHash }
+  }
+
+  // Multiple pipes found (shouldn't happen), treat as text only
+  try {
+    const bytes = new Uint8Array(stateHex.match(/.{2}/g)?.map(b => parseInt(b, 16)) || [])
+    let decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    decoded = decoded.replace(/~\|~/g, '|')
+    return { text: decoded }
+  } catch {
+    return { text: '' }
+  }
+}
+
+/** Try to decode hex as UTF-8 text using delimiter-based format, return original hex if not valid text */
 function tryDecodeHex(hex: string): string {
   if (!hex || hex === '00') return ''
-  try {
-    const bytes = new Uint8Array(hex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)))
-    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    // Only return decoded text if it's printable ASCII
-    if (/^[\x20-\x7e\t\n\r]*$/.test(decoded)) return decoded
-  } catch { /* not valid UTF-8 */ }
-  return hex
+
+  // Use new delimiter-based decoding
+  const { text } = decodeStateData(hex)
+  return text || hex  // Return decoded text or original hex if decode failed
 }
 
 async function handleMint() {
@@ -1208,22 +1256,14 @@ async function handleTransfer() {
       return
     }
 
-    // Build stateData: can have message, file hash, or both
-    // Format: message_hex + file_hash (64 chars) when both present
+    // Build stateData with pipe delimiter between message and file hash
     let newStateData: string | undefined
     if (fileData) {
       const hashBytes = Hash.sha256(Array.from(fileData.bytes))
       const fileHash = Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('')
-      if (messageText) {
-        // Both message and file: message bytes followed by file hash
-        newStateData = textToHex(messageText) + fileHash
-      } else {
-        // File only: just the hash
-        newStateData = fileHash
-      }
+      newStateData = encodeStateData(messageText || '', fileHash)
     } else if (messageText) {
-      // Message only
-      newStateData = textToHex(messageText)
+      newStateData = encodeStateData(messageText)
     }
     const includeStateData = (el('transfer-include-state') as HTMLInputElement)?.checked ?? false
     const result = await builder.createTransfer(tokenId, recipient, newStateData, fileData, includeStateData)
@@ -1480,10 +1520,10 @@ function handleRestoreWallet() {
     return
   }
 
-  // Get state data from input (convert text to hex)
+  // Get state data from input (convert text to hex using delimiter format)
   const stateInput = el(`fungible-state-${genKey}`) as HTMLInputElement
   const stateText = stateInput?.value?.trim() ?? ''
-  const newStateData = stateText ? textToHex(stateText) : undefined
+  const newStateData = stateText ? encodeStateData(stateText) : undefined
 
   const feeRate = parseInt(inputVal('fee-rate'), 10)
   if (feeRate > 0) builder.feePerKb = feeRate
