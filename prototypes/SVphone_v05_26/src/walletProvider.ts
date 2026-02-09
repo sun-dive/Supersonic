@@ -37,7 +37,9 @@ export interface WalletBlockHeader extends SpvBlockHeader {
 
 // ─── Rate Limiter (serializing queue) ────────────────────────────────
 
-const MIN_REQUEST_DELAY = 350
+// Increased from 350ms to 600ms to respect WhatsOnChain's rate limit (~1.7 req/sec)
+// With 96+ transactions in history, 350ms was causing 429 (Too Many Requests) errors
+const MIN_REQUEST_DELAY = 600
 
 /**
  * Serializing fetch queue. All API calls go through this single queue
@@ -64,12 +66,19 @@ function queuedFetch(url: string, init?: RequestInit): Promise<Response> {
 }
 
 /** queuedFetch with automatic retry on 429 (rate limited) responses. */
-async function fetchWithRetry(url: string, init?: RequestInit, maxRetries = 3): Promise<Response> {
+async function fetchWithRetry(url: string, init?: RequestInit, maxRetries = 5): Promise<Response> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const resp = await queuedFetch(url, init)
-    if (resp.status !== 429 || attempt === maxRetries) return resp
-    // Back off before retrying: 500ms, 1000ms, 1500ms
-    await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
+    if (resp.status !== 429 || attempt === maxRetries) {
+      if (resp.status === 429 && attempt === maxRetries) {
+        console.warn(`fetchWithRetry: Still getting 429 after ${maxRetries} retries for ${url}`)
+      }
+      return resp
+    }
+    // Back off before retrying: 1000ms, 2000ms, 3000ms, 4000ms, 5000ms
+    const backoffMs = 1000 * (attempt + 1)
+    console.debug(`fetchWithRetry: Got 429, backing off ${backoffMs}ms before retry ${attempt + 1}/${maxRetries}`)
+    await new Promise(r => setTimeout(r, backoffMs))
   }
   return queuedFetch(url, init) // unreachable, satisfies TS
 }
