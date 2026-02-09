@@ -411,6 +411,8 @@ export class TokenBuilder {
       stateData: opData.stateData,
       satoshis: TOKEN_SATS,
       status: 'active',
+      blockHeight: 0,  // Assume unconfirmed for auto-import from quarantine
+      confirmationStatus: 'unconfirmed',
       createdAt: new Date().toISOString(),
     }
     await this.store.addToken(token, verification.chain)
@@ -520,6 +522,8 @@ export class TokenBuilder {
         stateData,
         satoshis: TOKEN_SATS,
         status: 'active',
+        blockHeight: 0,  // Newly minted, unconfirmed
+        confirmationStatus: 'unconfirmed',
         createdAt,
         feePaid: i === 1 ? fee : undefined,
       }
@@ -603,6 +607,8 @@ export class TokenBuilder {
         outputIndex: 1,
         satoshis: params.initialSupply,
         status: 'active',
+        blockHeight: 0,  // Newly minted, unconfirmed
+        confirmationStatus: 'unconfirmed',
       }],
       createdAt: new Date().toISOString(),
       feePaid: fee,
@@ -1166,16 +1172,6 @@ export class TokenBuilder {
     for (const h of history) txIdSet.add(h.txId)
     for (const u of utxos) txIdSet.add(u.txId)
 
-    // Build set of unconfirmed TXs (blockHeight === 0)
-    // These need special handling since their outputs won't be in the confirmed UTXO set yet
-    const unconfirmedTxIds = new Set<string>()
-    for (const h of history) {
-      if (h.blockHeight === 0) {
-        unconfirmedTxIds.add(h.txId)
-      }
-    }
-    console.debug(`checkIncoming: ${unconfirmedTxIds.size} unconfirmed TXs in history`)
-
     // Build set of currently unspent outputs: "txId:outputIndex"
     // This is CRITICAL: only import outputs that are still unspent on-chain
     const unspentSet = new Set<string>()
@@ -1311,10 +1307,11 @@ export class TokenBuilder {
 
         // CRITICAL: Filter to only include outputs that are still unspent on-chain
         // Without this check, spent outputs from transaction history would be re-imported
-        // EXCEPTION: For unconfirmed TXs, treat all P2PKH outputs as unspent (SPV: accept pending TXs)
-        const isUnconfirmedTx = unconfirmedTxIds.has(txId)
+        // SPV: For unconfirmed TXs, treat all P2PKH outputs as unspent
+        const historyEntry = history.find(h => h.txId === txId)
+        const blockHeight = historyEntry?.blockHeight ?? 0
         const unspentP2pkhIndices = p2pkhOutputIndices.filter(i =>
-          isUnconfirmedTx || unspentSet.has(`${txId}:${i}`)
+          blockHeight === 0 || unspentSet.has(`${txId}:${i}`)
         )
 
         // For fungible tokens: only specific output indices are token UTXOs (not fee change)
@@ -1323,8 +1320,8 @@ export class TokenBuilder {
         // For NFTs: only 1-sat outputs count (handled via unspentP2pkhIndices)
         const validFungibleIndices = isTxTransfer ? [0, 2] : [1]  // Transfer: recipient+change, Genesis: token output
         const fungibleOutputs = isFungible
-          ? p2pkhOutputsWithSats.filter(o => o.sats > 0 && validFungibleIndices.includes(o.index) && (isUnconfirmedTx || unspentSet.has(`${txId}:${o.index}`)))
-          : p2pkhOutputsWithSats.filter(o => o.sats > 0 && o.sats !== TOKEN_SATS && (isUnconfirmedTx || unspentSet.has(`${txId}:${o.index}`)))
+          ? p2pkhOutputsWithSats.filter(o => o.sats > 0 && validFungibleIndices.includes(o.index) && (blockHeight === 0 || unspentSet.has(`${txId}:${o.index}`)))
+          : p2pkhOutputsWithSats.filter(o => o.sats > 0 && o.sats !== TOKEN_SATS && (blockHeight === 0 || unspentSet.has(`${txId}:${o.index}`)))
 
         if (!opData || (unspentP2pkhIndices.length === 0 && fungibleOutputs.length === 0)) {
           console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (opData=${!!opData}, nftMatches=${unspentP2pkhIndices.length}, fungibleMatches=${fungibleOutputs.length})`)
@@ -1362,7 +1359,6 @@ export class TokenBuilder {
           if (fungibleToken) {
             // Add new UTXOs to existing basket
             const now = new Date().toISOString()
-            const utxoStatus = isUnconfirmedTx ? 'pending' as const : 'active' as const
             for (const output of fungibleOutputs) {
               const existingUtxo = fungibleToken.utxos.find(
                 u => u.txId === txId && u.outputIndex === output.index
@@ -1372,15 +1368,18 @@ export class TokenBuilder {
                   txId,
                   outputIndex: output.index,
                   satoshis: output.sats,
-                  status: utxoStatus,
+                  status: 'active',  // Always active (pure SPV)
                   stateData: opData.stateData || undefined,  // Per-UTXO state data
                   receivedAt: now,
+                  blockHeight,
+                  confirmationStatus: blockHeight === 0 ? 'unconfirmed' : 'confirmed',
                 })
-                const pendingLabel = isUnconfirmedTx ? ' (pending)' : ''
-                onStatus?.(`Found fungible UTXO: ${opData.tokenName} +${output.sats} sats${pendingLabel}`)
-              } else if (existingUtxo.status === 'pending' && !isUnconfirmedTx) {
-                // Pending UTXO just got confirmed - update to active
-                existingUtxo.status = 'active'
+                const confirmLabel = blockHeight === 0 ? ' (unconfirmed)' : ''
+                onStatus?.(`Found fungible UTXO: ${opData.tokenName} +${output.sats} sats${confirmLabel}`)
+              } else if (existingUtxo.blockHeight === 0 && blockHeight > 0) {
+                // Unconfirmed UTXO just got confirmed - update metadata only
+                existingUtxo.blockHeight = blockHeight
+                existingUtxo.confirmationStatus = 'confirmed'
                 onStatus?.(`Confirmed fungible UTXO: ${opData.tokenName} +${output.sats} sats`)
               }
             }
@@ -1390,7 +1389,6 @@ export class TokenBuilder {
           } else {
             // Create new fungible token with UTXOs
             const now = new Date().toISOString()
-            const utxoStatus = isUnconfirmedTx ? 'pending' as const : 'active' as const
             fungibleToken = {
               tokenId,
               genesisTxId,
@@ -1403,15 +1401,17 @@ export class TokenBuilder {
                 txId,
                 outputIndex: o.index,
                 satoshis: o.sats,
-                status: utxoStatus,
+                status: 'active',  // Always active (pure SPV)
                 stateData: opData.stateData || undefined,  // Per-UTXO state data
                 receivedAt: now,
+                blockHeight,
+                confirmationStatus: blockHeight === 0 ? 'unconfirmed' : 'confirmed',
               })),
               createdAt: now,
             }
             await this.store.addFungibleToken(fungibleToken, verification.chain)
-            const pendingLabel = isUnconfirmedTx ? ' (pending)' : ''
-            onStatus?.(`Found fungible token: ${opData.tokenName}${pendingLabel} (${fungibleOutputs.reduce((s, o) => s + o.sats, 0)} sats)`)
+            const confirmLabel = blockHeight === 0 ? ' (unconfirmed)' : ''
+            onStatus?.(`Found fungible token: ${opData.tokenName}${confirmLabel} (${fungibleOutputs.reduce((s, o) => s + o.sats, 0)} sats)`)
           }
           continue
         }
@@ -1483,14 +1483,16 @@ export class TokenBuilder {
               tokenAttributes: opData.tokenAttributes,
               stateData: opData.stateData,
               satoshis: TOKEN_SATS,
-              status: isUnconfirmedTx ? 'pending' : 'active',
+              status: 'active',  // Always active (pure SPV)
+              blockHeight,
+              confirmationStatus: blockHeight === 0 ? 'unconfirmed' : 'confirmed',
               createdAt: new Date().toISOString(),
             }
 
             await this.store.addToken(token, verification.chain)
             imported.push(token)
-            const pendingLabel = isUnconfirmedTx ? ' (pending)' : ''
-            onStatus?.(`Found token: ${token.tokenName}${pendingLabel} (${tokenId.slice(0, 12)}...)`)
+            const confirmLabel = blockHeight === 0 ? ' (unconfirmed)' : ''
+            onStatus?.(`Found token: ${token.tokenName}${confirmLabel} (${tokenId.slice(0, 12)}...)`)
           }
         } else {
           // Genesis TX: one token per P2PKH output
@@ -1508,17 +1510,16 @@ export class TokenBuilder {
           for (const p2pkhOutputIndex of unspentP2pkhIndices) {
             const tokenId = computeTokenId(genesisTxId, p2pkhOutputIndex, immutableBytes)
             const existing = await this.store.getToken(tokenId)
-            if (existing && existing.status === 'active') continue
-
-            // Pending token just got confirmed - update to active
-            if (existing && existing.status === 'pending' && !isUnconfirmedTx) {
-              existing.status = 'active'
-              await this.store.updateToken(existing)
-              onStatus?.(`Confirmed token: ${existing.tokenName} (${tokenId.slice(0, 12)}...)`)
+            if (existing && existing.status === 'active') {
+              // Token exists - check if confirmation status needs updating
+              if (existing.blockHeight === 0 && blockHeight > 0) {
+                existing.blockHeight = blockHeight
+                existing.confirmationStatus = 'confirmed'
+                await this.store.updateToken(existing)
+                onStatus?.(`Confirmed token: ${existing.tokenName} (${tokenId.slice(0, 12)}...)`)
+              }
               continue
             }
-            // Still pending, skip
-            if (existing && existing.status === 'pending') continue
 
             if (existing && (existing.status === 'transferred' || existing.status === 'pending_transfer')) {
               // Return-to-sender: token was sent away but came back to us
@@ -1546,14 +1547,16 @@ export class TokenBuilder {
               tokenAttributes: opData.tokenAttributes,
               stateData: opData.stateData,
               satoshis: TOKEN_SATS,
-              status: isUnconfirmedTx ? 'pending' : 'active',
+              status: 'active',  // Always active (pure SPV)
+              blockHeight,
+              confirmationStatus: blockHeight === 0 ? 'unconfirmed' : 'confirmed',
               createdAt: new Date().toISOString(),
             }
 
             await this.store.addToken(token, genesisVerification.chain)
             imported.push(token)
-            const pendingLabel = isUnconfirmedTx ? ' (pending)' : ''
-            onStatus?.(`Found token: ${token.tokenName}${pendingLabel} #${p2pkhOutputIndex} (${tokenId.slice(0, 12)}...)`)
+            const confirmLabel = blockHeight === 0 ? ' (unconfirmed)' : ''
+            onStatus?.(`Found token: ${token.tokenName}${confirmLabel} #${p2pkhOutputIndex} (${tokenId.slice(0, 12)}...)`)
           }
         }
       } catch (e) {

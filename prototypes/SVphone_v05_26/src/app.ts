@@ -660,7 +660,7 @@ function renderFungibleCard(ft: FungibleToken): string {
               return `
               <div style="padding:8px 0;border-bottom:1px solid #21262d;">
                 <div style="display:flex;align-items:center;gap:8px;">
-                  <span class="badge ${u.status === 'active' ? 'badge-active' : u.status === 'pending' ? 'badge-unconfirmed' : u.status === 'pending_transfer' ? 'badge-pending' : 'badge-transferred'}">${u.status === 'pending' ? 'unconfirmed' : u.status}</span>
+                  <span class="badge ${u.status === 'active' ? 'badge-active' : u.status === 'pending_transfer' ? 'badge-pending' : 'badge-transferred'}">${u.status}</span>${u.confirmationStatus === 'unconfirmed' ? '<span class="badge badge-unconfirmed" title="Not yet confirmed">⏳</span>' : ''}
                   <strong>${u.satoshis.toLocaleString()} tokens</strong>
                   ${u.receivedAt ? `<span class="muted" style="font-size:0.8em;">${formatDate(u.receivedAt)}</span>` : ''}
                   <button onclick="window._removeUtxo('${ft.tokenId}', '${u.txId}', ${u.outputIndex})" style="margin-left:auto;font-size:0.7em;padding:2px 6px;background:#da3633;" title="Remove this UTXO from basket">×</button>
@@ -680,7 +680,7 @@ function renderFungibleCard(ft: FungibleToken): string {
 }
 
 function renderTokenCard(t: OwnedToken): string {
-  const statusBadge = renderStatusBadge(t.status)
+  const statusBadge = renderStatusBadge(t.status, t.confirmationStatus)
   const actions = renderTokenActions(t)
   const rules = renderRules(t.tokenRules)
   const attrsDisplay = renderHexField(t.tokenAttributes, t)
@@ -740,7 +740,7 @@ function renderTokenCard(t: OwnedToken): string {
 }
 
 function renderTokenDetail(t: OwnedToken): string {
-  const statusBadge = renderStatusBadge(t.status)
+  const statusBadge = renderStatusBadge(t.status, t.confirmationStatus)
   const actions = renderTokenActions(t)
   const attrsDisplay = renderHexField(t.tokenAttributes, t)
   const stateDisplay = renderStateData(t.stateData, t)
@@ -765,16 +765,32 @@ function renderTokenDetail(t: OwnedToken): string {
     </div>`
 }
 
-function renderStatusBadge(status: string): string {
+function renderStatusBadge(status: string, confirmationStatus?: string): string {
+  let badge = ''
   switch (status) {
-    case 'active': return '<span class="badge badge-active">Active</span>'
-    case 'pending': return '<span class="badge badge-unconfirmed">Unconfirmed</span>'
-    case 'pending_transfer': return '<span class="badge badge-pending">Pending Transfer</span>'
-    case 'transferred': return '<span class="badge badge-transferred">Transferred</span>'
-    case 'flushed': return '<span class="badge" style="background:#da3633;">Flushed</span>'
-    case 'recovered': return '<span class="badge" style="background:#238636;">Recovered</span>'
-    default: return ''
+    case 'active':
+      if (confirmationStatus === 'unconfirmed') {
+        badge = '<span class="badge badge-active">Active</span><span class="badge badge-unconfirmed" title="Transaction not yet confirmed">⏳ Unconfirmed</span>'
+      } else {
+        badge = '<span class="badge badge-active">Active</span>'
+      }
+      break
+    case 'pending_transfer':
+      badge = '<span class="badge badge-pending">Pending Transfer</span>'
+      break
+    case 'transferred':
+      badge = '<span class="badge badge-transferred">Transferred</span>'
+      break
+    case 'flushed':
+      badge = '<span class="badge" style="background:#da3633;">Flushed</span>'
+      break
+    case 'recovered':
+      badge = '<span class="badge" style="background:#238636;">Recovered</span>'
+      break
+    default:
+      badge = ''
   }
+  return badge
 }
 
 function renderTokenActions(t: OwnedToken): string {
@@ -782,8 +798,8 @@ function renderTokenActions(t: OwnedToken): string {
   const r = decodeTokenRules(t.tokenRules)
   const isFragment = r.divisibility > 0
 
-  // Allow transfers for both active and pending tokens (SPV: instant forwarding capability)
-  if (t.status === 'active' || t.status === 'pending') {
+  // SPV: All active tokens can be transferred immediately, even if unconfirmed
+  if (t.status === 'active') {
     parts.push(`<button onclick="window._selectForTransfer('${t.tokenId}')">Select for Transfer</button>`)
     if (isFragment) {
       parts.push(`<button onclick="window._sendSingleFragment('${t.tokenId}', ${t.genesisOutputIndex})">Send ${fragmentLabel(t.genesisOutputIndex, r.divisibility, r.supply)}</button>`)

@@ -1,0 +1,17 @@
+{
+  "name": "svphone-v05-25",
+  "version": "0.5.25",
+  "type": "module",
+  "description": "SVphone v05.25 - P Token Wallet (proof token protocol with SPV verification)",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node serve.mjs",
+    "dev": "node serve.mjs"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0"
+  }
+}

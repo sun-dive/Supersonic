@@ -11,19 +11,19 @@ docs\bitcoin.pdf
 
 Read these to understand the protocol design and architecture:
 
-1. `docs/P_fundamental_design_principles.md` — Token lifecycle, SPV verification, data fields, immutable vs mutable fields
+1. `docs\SVphone_fundamental_design_principles.md` — Token lifecycle, SPV verification, data fields, immutable vs mutable fields
 
 Reply with a concise summary of what you read.
 
 
-2. `docs/P_structure_and_function.md` — Detailed structure and function documentation (note: covers v05 despite filename)
+2. `docs\SVphone_structure_and_function.md` — Detailed structure and function documentation (note: covers v05 despite filename)
 
 Reply with a concise summary of what you read.
 
 
 ## 3. Protocol Layer (pure SPV, no network dependencies)
 
-Look at the lastest prototype in this folder
+Look at the lastest prototypes in this folder
 3. `prototypes\`
 
 Reply with a concise summary of the latest code base and design.
