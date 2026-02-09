@@ -1218,7 +1218,19 @@ export class TokenBuilder {
     console.debug(`checkIncoming: my address = ${this.myAddress}`)
     console.debug(`checkIncoming: NFT TXs=${nftTxIds.size}, knownFungibleUtxos=${knownFungibleUtxos.size}, txsWithPotentialNew=${txsWithPotentialNewUtxos.size}`)
 
+    let skippedConfirmed = 0
     for (const txId of allTxIds) {
+      // Optimization: Skip confirmed transactions that are already fully processed
+      // (no need to fetch from API if nothing new could have changed)
+      const historyEntry = history.find(h => h.txId === txId)
+      const blockHeight = historyEntry?.blockHeight ?? 0
+
+      if (blockHeight > 0 && !txsWithPotentialNewUtxos.has(txId)) {
+        // This is a confirmed TX with no potential new UTXOs - definitely skip
+        skippedConfirmed++
+        continue
+      }
+
       // Skip if it's a known NFT TX AND doesn't have potential new fungible UTXOs
       if (nftTxIds.has(txId) && !txsWithPotentialNewUtxos.has(txId)) {
         console.debug(`checkIncoming: SKIP ${txId.slice(0, 12)}... (known NFT TX, no new UTXOs)`)
@@ -1447,25 +1459,16 @@ export class TokenBuilder {
 
           const existing = await this.store.getToken(tokenId)
           // Skip if already active
-          if (existing && existing.status === 'active') {
-            // Check if confirmation status needs updating
-            if (existing.blockHeight === 0 && blockHeight > 0) {
-              existing.blockHeight = blockHeight
-              existing.confirmationStatus = 'confirmed'
-              await this.store.updateToken(existing)
-              onStatus?.(`Confirmed token: ${existing.tokenName} (${tokenId.slice(0, 12)}...)`)
-            }
-            continue
-          }
-          // Legacy pending tokens from before pure SPV refactoring: upgrade to active
-          if (existing && existing.status === 'pending') {
+          if (existing && existing.status === 'active') continue
+          // Pending token just got confirmed - update to active
+          if (existing && existing.status === 'pending' && !isUnconfirmedTx) {
             existing.status = 'active'
-            existing.blockHeight = blockHeight
-            existing.confirmationStatus = blockHeight === 0 ? 'unconfirmed' : 'confirmed'
             await this.store.updateToken(existing)
-            onStatus?.(`Upgraded legacy token: ${existing.tokenName} (${tokenId.slice(0, 12)}...)`)
+            onStatus?.(`Confirmed token: ${existing.tokenName} (${tokenId.slice(0, 12)}...)`)
             continue
           }
+          // Still pending, skip
+          if (existing && existing.status === 'pending') continue
           // Return-to-sender: token was sent away but came back to us
           if (existing && (existing.status === 'transferred' || existing.status === 'pending_transfer')) {
             existing.status = 'active'
@@ -1574,6 +1577,7 @@ export class TokenBuilder {
       }
     }
 
+    console.debug(`checkIncoming: Completed scan. Skipped ${skippedConfirmed} confirmed TXs, imported ${imported.length} new token(s).`)
     onStatus?.(imported.length > 0
       ? `Done! Imported ${imported.length} token(s).`
       : 'No new incoming tokens found.')
