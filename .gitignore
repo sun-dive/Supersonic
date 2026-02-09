@@ -4,10 +4,6 @@
 # But not these files
 !.gitignore
 !docs/
-!docs/MPT_fundamental_design_principles.md
-!docs/MPT_structure_and_function.md
-!docs/P_fundamental_design_principles.md
-!docs/P_structure_and_function.md
 !docs/SVphone_fundamental_design_principles.md
 !docs/SVphone_structure_and_function.md
 !docs/bitcoin.pdf
