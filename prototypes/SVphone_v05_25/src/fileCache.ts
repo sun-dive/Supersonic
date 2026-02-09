@@ -14,7 +14,7 @@ export interface CachedFile {
 
 const DB_NAME = 'p-files'
 const STORE_NAME = 'files'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 export class FileCache {
   private dbPromise: Promise<IDBDatabase>
