@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MPT Prototype Wallet v05 (BSV Mainnet)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+      background: #0d1117; color: #c9d1d9;
+      max-width: 800px; margin: 0 auto; padding: 20px;
+    }
+    h1 { color: #58a6ff; margin-bottom: 4px; font-size: 1.4em; }
+    h2 { color: #8b949e; margin-bottom: 10px; font-size: 1.1em; border-bottom: 1px solid #21262d; padding-bottom: 6px; }
+    small { color: #8b949e; font-weight: normal; }
+
+    section { margin-bottom: 24px; padding: 16px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; }
+
+    code { background: #0d1117; padding: 2px 6px; border-radius: 3px; font-size: 0.85em; word-break: break-all; }
+    pre { background: #0d1117; padding: 10px; border-radius: 4px; margin-top: 8px; overflow-x: auto; font-size: 0.85em; white-space: pre-wrap; word-break: break-all; }
+
+    .field { margin: 4px 0; }
+    .label { color: #8b949e; min-width: 100px; display: inline-block; }
+    .muted { color: #8b949e; font-size: 0.9em; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    input, textarea {
+      background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
+      padding: 8px 10px; border-radius: 4px; font-family: inherit; width: 100%; margin-bottom: 8px;
+    }
+    input:focus, textarea:focus { border-color: #58a6ff; outline: none; }
+
+    button {
+      background: #238636; color: #fff; border: none; padding: 8px 16px;
+      border-radius: 4px; cursor: pointer; font-size: 0.9em;
+    }
+    button:hover { background: #2ea043; }
+
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .token-card { border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 10px; background: #0d1117; }
+    .token-header { font-weight: bold; margin-bottom: 8px; font-size: 1.05em; }
+    .token-field { font-size: 0.85em; margin: 2px 0; }
+    .token-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .token-transferred { opacity: 0.5; }
+    .token-pending { border-color: #d29922; }
+
+    .badge { font-size: 0.75em; padding: 2px 8px; border-radius: 10px; font-weight: normal; }
+    .badge-active { background: #238636; color: #fff; }
+    .badge-unconfirmed { background: #8957e5; color: #fff; }
+    .badge-pending { background: #d29922; color: #000; }
+    .badge-transferred { background: #8b949e; color: #000; }
+
+    .selectable { user-select: all; cursor: pointer; }
+    .btn-confirm { background: #d29922; color: #000; }
+    .btn-confirm:hover { background: #e3b341; }
+
+    .btn-danger { background: #da3633; }
+    .btn-danger:hover { background: #f85149; }
+
+    .arch-note { font-size: 0.8em; color: #484f58; margin-top: 4px; }
+
+    /* Media modal */
+    #media-modal {
+      display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.9); z-index: 9999; justify-content: center; align-items: center;
+      flex-direction: column;
+    }
+    #media-modal.show { display: flex; }
+    #media-modal .close-btn {
+      position: absolute; top: 16px; right: 24px; font-size: 2em; color: #fff;
+      cursor: pointer; z-index: 10000; background: none; border: none; padding: 0;
+    }
+    #media-modal .close-btn:hover { color: #58a6ff; }
+    #media-modal .filename { color: #8b949e; margin-bottom: 12px; font-size: 0.9em; }
+    #media-modal img { max-width: 90%; max-height: 80vh; }
+    #media-modal video { max-width: 90%; max-height: 70vh; }
+    #media-modal audio { width: 80%; max-width: 500px; }
+    #media-modal pre { background: #161b22; color: #c9d1d9; padding: 20px; border-radius: 6px; max-width: 90%; max-height: 80vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+    #media-controls { display: flex; gap: 12px; align-items: center; margin-top: 16px; flex-wrap: wrap; justify-content: center; }
+    #media-controls button { background: #30363d; border: none; color: #fff; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 1em; display: flex; align-items: center; gap: 6px; }
+    #media-controls button:hover { background: #484f58; }
+    #media-controls button.active { background: #238636; }
+    #media-controls .volume-wrap { display: flex; align-items: center; gap: 8px; color: #8b949e; }
+    #media-controls input[type="range"] { width: 80px; accent-color: #58a6ff; }
+  </style>
+</head>
+<body>
+
+  <h1>MPT Prototype Wallet v05 <small>BSV Mainnet</small></h1>
+  <p class="muted" style="margin-bottom:16px;">Merkle Proof Token -- P2PKH + OP_RETURN prototype. v05: consensus script field, address-based transfers, ownership via P2PKH output. Token verification uses Merkle proofs + block headers only. MAINNET -- real BSV.</p>
+
+  <!-- Wallet Info -->
+  <section id="wallet-info">
+    <h2>Wallet</h2>
+    <div class="field"><span class="label">Address:</span> <code id="address">...</code></div>
+    <div class="field"><span class="label">Public Key:</span> <code id="pubkey">...</code></div>
+    <div class="field"><span class="label">Private Key (WIF):</span> <code id="privkey">...</code></div>
+    <div class="field"><span class="label">Balance:</span> <span id="balance">...</span></div>
+    <div class="row" style="margin-top:10px;">
+      <button id="btn-refresh">Refresh Balance</button>
+      <a href="https://whatsonchain.com/" target="_blank" rel="noopener">WhatsOnChain Explorer</a>
+      <span style="flex:1"></span>
+      <button id="btn-new-wallet" class="btn-danger">New Wallet</button>
+    </div>
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid #21262d;">
+      <div class="row">
+        <input id="import-wif" placeholder="Paste WIF private key to restore wallet" style="flex:1;" />
+        <button id="btn-restore-wallet">Restore Wallet</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Send BSV -->
+  <section>
+    <h2>Send BSV</h2>
+    <input id="send-address" placeholder="Recipient BSV address (e.g. 1A1zP1...)" />
+    <input id="send-amount" type="number" placeholder="Amount in satoshis" min="1" style="width:200px;" />
+    <button id="btn-send">Send</button>
+    <pre id="send-result"></pre>
+  </section>
+
+  <!-- Mint Token -->
+  <section>
+    <h2>Mint Token</h2>
+    <div class="row" style="margin-bottom:12px;">
+      <button id="btn-mint-mode" style="min-width:140px; background:#238636;">Fungible</button>
+      <span class="muted" id="mint-mode-hint">Fungible: amount = satoshis, all UTXOs share same Token ID</span>
+    </div>
+
+    <!-- Common fields (both modes) -->
+    <div class="row">
+      <input id="token-name" placeholder="Token name (e.g. My First MPT)" style="flex:1;" />
+      <button id="btn-name-mode" style="white-space:nowrap; min-width:70px; background:#30363d;">Text</button>
+    </div>
+
+    <!-- Fungible-only field -->
+    <div id="fungible-fields">
+      <div class="row">
+        <input id="fungible-supply" type="number" placeholder="Initial supply (satoshis)" value="1000" min="1" style="flex:1;" />
+      </div>
+      <p class="arch-note">Initial supply in satoshis. Each satoshi = 1 token unit. Can receive more UTXOs later.</p>
+    </div>
+
+    <!-- NFT-only fields (hidden by default) -->
+    <div id="nft-fields" style="display:none;">
+      <div class="row">
+        <input id="token-script" placeholder="Consensus script (optional, raw hex -- miner-enforced)" style="flex:1;" />
+      </div>
+      <div class="row">
+        <input id="token-attrs" placeholder="Attributes (optional, e.g. 01 for #1)" style="flex:1;" />
+        <button id="btn-attrs-mode" style="white-space:nowrap; min-width:70px; background:#30363d;">Text</button>
+      </div>
+      <div class="row">
+        <input type="file" id="token-file" style="flex:1; font-size:0.85em;" />
+        <button id="btn-clear-file" style="white-space:nowrap; min-width:70px; background:#30363d; display:none;">Clear</button>
+      </div>
+      <p class="arch-note" id="file-info" style="display:none;"></p>
+      <div class="row">
+        <input id="token-state" placeholder="State data (mutable field)" style="flex:1;" />
+        <button id="btn-state-mode" style="white-space:nowrap; min-width:70px; background:#30363d;">Text</button>
+      </div>
+      <p class="arch-note" id="field-mode-hint">Text mode: input is UTF-8 encoded to hex. Toggle individual fields for raw hex input.</p>
+      <div class="row">
+        <div style="width:120px;"><input id="token-supply" type="number" placeholder="Supply" value="1" min="1" max="65535" style="width:100%;" /><span class="arch-note">Supply</span></div>
+        <div style="width:120px;"><input id="token-divisibility" type="number" placeholder="Divisibility" value="0" min="0" max="65535" style="width:100%;" /><span class="arch-note">Divisibility</span></div>
+        <div style="width:120px;"><input id="token-restrictions" type="number" placeholder="Restrictions" value="0" min="0" max="65535" style="width:100%;" /><span class="arch-note">Restrictions</span></div>
+        <div style="width:120px;"><input id="token-rules-version" type="number" placeholder="Rules ver." value="1" min="0" max="65535" style="width:100%;" /><span class="arch-note">Rules ver.</span></div>
+      </div>
+      <p class="arch-note">All immutable after mint. Consensus script = raw Bitcoin Script bytes enforced by miners (empty = standard P2PKH). Divisibility 0 = NFT/distinct tokens. Divisibility &gt; 0 = fragments per whole (e.g. supply=4 div=2 → 4 tokens × 2 halves = 8 fragment UTXOs). Restrictions = bitfield.</p>
+    </div>
+
+    <div class="row" style="justify-content:flex-end; margin-top:8px;">
+      <span class="arch-note" style="align-self:center;">sats/KB</span>
+      <input id="fee-rate" type="number" placeholder="100" value="100" min="1" style="width:80px; margin-bottom:0;" />
+      <button id="btn-mint">Mint Token</button>
+    </div>
+    <pre id="mint-result"></pre>
+  </section>
+
+  <!-- My Tokens -->
+  <section>
+    <h2>My Tokens</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <button id="btn-check-incoming">Check Incoming Tokens</button>
+      <span id="incoming-status" class="muted"></span>
+    </div>
+    <div id="token-list"><p class="muted">No tokens yet. Mint one above.</p></div>
+  </section>
+
+  <!-- Transfer Token -->
+  <section id="transfer-section">
+    <h2>Transfer Token</h2>
+    <input id="transfer-token-id" placeholder="Token ID (select from My Tokens)" />
+    <input id="transfer-recipient" placeholder="Recipient BSV address (e.g. 1A1zP1...)" />
+    <textarea id="transfer-message" placeholder="Message (optional, stored on-chain)" rows="2" style="resize:vertical;"></textarea>
+    <div class="row">
+      <input type="file" id="transfer-file" style="flex:1; font-size:0.85em;" />
+      <button id="btn-clear-transfer-file" style="white-space:nowrap; min-width:70px; background:#30363d; display:none;">Clear</button>
+    </div>
+    <p class="arch-note" id="transfer-file-info" style="display:none;"></p>
+    <p class="arch-note">You can include a message, a file, or both. File is embedded on-chain; hash appended to stateData.</p>
+    <button id="btn-transfer">Transfer</button>
+    <pre id="transfer-result"></pre>
+  </section>
+
+  <!-- Verify Token -->
+  <section>
+    <h2>Verify Token</h2>
+    <p class="arch-note">Verification uses only Merkle proofs + block headers (SPV). No UTXO lookups required.</p>
+    <input id="verify-token-id" placeholder="Token ID" />
+    <button id="btn-verify">Verify Proof Chain</button>
+    <pre id="verify-result"></pre>
+  </section>
+
+  <!-- Media Modal -->
+  <div id="media-modal">
+    <button class="close-btn" onclick="window._closeMediaModal()">&times;</button>
+    <div class="filename" id="media-filename"></div>
+    <div id="media-content"></div>
+    <div id="media-controls" style="display:none;">
+      <button id="mc-play" onclick="window._mediaPlay()">▶ Play</button>
+      <button id="mc-pause" onclick="window._mediaPause()">⏸ Pause</button>
+      <button id="mc-stop" onclick="window._mediaStop()">⏹ Stop</button>
+      <button id="mc-loop" onclick="window._mediaLoop()">🔁 Repeat</button>
+      <div class="volume-wrap">
+        <span>🔊</span>
+        <input type="range" id="mc-volume" min="0" max="100" value="100" oninput="window._mediaVolume(this.value)" />
+      </div>
+    </div>
+  </div>
+
+  <script src="bundle.js"></script>
+</body>
+</html>

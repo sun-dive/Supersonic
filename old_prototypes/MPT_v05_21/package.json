@@ -1,0 +1,17 @@
+{
+  "name": "mpt-v05-21",
+  "version": "0.5.21",
+  "type": "module",
+  "description": "MPT Prototype v05.21 - Merkle Proof Token Wallet (removed redundant genesisOutputIndex from transfer OP_RETURN)",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node serve.mjs",
+    "dev": "node serve.mjs"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0"
+  }
+}

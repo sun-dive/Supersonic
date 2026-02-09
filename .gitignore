@@ -12,14 +12,10 @@
 !docs/old_docs/
 !docs/old_docs/**
 !prototypes/
-!prototypes/SVphone_v00_00/
-!prototypes/SVphone_v00_00/**
-!prototypes/SVphone_v00_01/
-!prototypes/SVphone_v00_01/**
-!prototypes/SVphone_v00_02/
-!prototypes/SVphone_v00_02/**
 !prototypes/SVphone_v05_24/
 !prototypes/SVphone_v05_24/**
+!old_prototypes/
+!old_prototypes/**
 !workflows/
 !workflows/**
 !archive/
