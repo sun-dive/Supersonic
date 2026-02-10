@@ -380,6 +380,189 @@
                 grid-template-columns: 1fr;
             }
         }
+
+        /* Microphone Test Section */
+        .mic-test-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding-bottom: 10px;
+            user-select: none;
+        }
+
+        .section-header h3 {
+            margin: 0;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        .toggle-icon {
+            font-size: 1.2em;
+            transition: transform 0.3s;
+        }
+
+        .toggle-icon.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .mic-test-content {
+            margin-top: 15px;
+            max-height: 600px;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, opacity 0.3s;
+            opacity: 1;
+        }
+
+        .mic-test-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            margin-top: 0;
+        }
+
+        /* Audio Level Meter */
+        .meter-container {
+            margin-bottom: 15px;
+        }
+
+        .meter-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.85em;
+        }
+
+        #micLevelMeter {
+            width: 100%;
+            height: 40px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .level-indicator {
+            text-align: right;
+            font-size: 0.85em;
+            font-family: 'Monaco', monospace;
+            margin-top: 5px;
+            color: #4a9eff;
+        }
+
+        /* Volume Slider */
+        .volume-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            background: linear-gradient(to right,
+                rgba(255, 107, 107, 0.3) 0%,
+                rgba(74, 158, 255, 0.3) 50%,
+                rgba(56, 239, 125, 0.3) 100%);
+            outline: none;
+            border-radius: 5px;
+            height: 8px;
+            width: 100%;
+            cursor: pointer;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4a9eff;
+            cursor: pointer;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+
+        .volume-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4a9eff;
+            cursor: pointer;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+
+        .volume-slider:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Checkbox Styling */
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 0.95em;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"]:disabled {
+            cursor: not-allowed;
+        }
+
+        /* Recording Section */
+        .recording-section {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .recording-status {
+            text-align: center;
+            margin-top: 10px;
+            font-family: 'Monaco', monospace;
+            font-size: 0.9em;
+            color: #4a9eff;
+        }
+
+        /* Status Display */
+        .mic-status {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+            font-size: 0.85em;
+            text-align: center;
+        }
+
+        .mic-status.error {
+            background: rgba(255, 107, 107, 0.2);
+            color: #ff6b6b;
+            border: 1px solid rgba(255, 107, 107, 0.3);
+        }
+
+        .mic-status.success {
+            background: rgba(56, 239, 125, 0.2);
+            color: #38ef7d;
+            border: 1px solid rgba(56, 239, 125, 0.3);
+        }
+
+        .mic-status.warning {
+            background: rgba(255, 165, 0, 0.2);
+            color: #ffa500;
+            border: 1px solid rgba(255, 165, 0, 0.3);
+        }
+
+        .mic-status.info {
+            background: rgba(74, 158, 255, 0.2);
+            color: #4a9eff;
+            border: 1px solid rgba(74, 158, 255, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -429,6 +612,81 @@
                         <option value="sd">SD (500 kbps, 24fps, 640×480)</option>
                         <option value="ld">LD (100 kbps, 15fps, 320×240)</option>
                     </select>
+                </div>
+
+                <!-- Microphone Test Section -->
+                <div class="mic-test-section" id="micTestSection">
+                    <div class="section-header" onclick="app.toggleMicTest()">
+                        <h3>🎤 Microphone Test</h3>
+                        <span class="toggle-icon" id="micTestToggle">▼</span>
+                    </div>
+
+                    <div class="mic-test-content" id="micTestContent">
+                        <!-- Test Control Buttons -->
+                        <div class="button-group" style="grid-template-columns: 1fr 1fr; margin-bottom: 15px;">
+                            <button class="btn-primary" id="startMicTestBtn" onclick="app.startMicTest()">
+                                🎤 Start Test
+                            </button>
+                            <button class="btn-danger" id="stopMicTestBtn" onclick="app.stopMicTest()"
+                                    style="display:none;">
+                                ⏹ Stop Test
+                            </button>
+                        </div>
+
+                        <!-- Audio Level Meter -->
+                        <div class="meter-container">
+                            <label>Input Level</label>
+                            <canvas id="micLevelMeter" width="400" height="40"></canvas>
+                            <div class="level-indicator" id="levelIndicator">- dB</div>
+                        </div>
+
+                        <!-- Volume Control Slider -->
+                        <div class="form-group">
+                            <label for="micVolumeSlider">
+                                Input Gain: <span id="volumeValue">100%</span>
+                            </label>
+                            <input type="range" id="micVolumeSlider" class="volume-slider"
+                                   min="0" max="200" value="100" step="1"
+                                   oninput="app.updateMicVolume(this.value)"
+                                   disabled>
+                        </div>
+
+                        <!-- Mute Toggle -->
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="micMuteCheckbox"
+                                       onchange="app.toggleMicMute(this.checked)"
+                                       disabled>
+                                <span>Mute Microphone</span>
+                            </label>
+                        </div>
+
+                        <!-- Recording Controls -->
+                        <div class="recording-section" id="recordingSection" style="display:none;">
+                            <div class="button-group" style="grid-template-columns: 1fr 1fr 1fr;">
+                                <button class="btn-warning" id="startRecordBtn"
+                                        onclick="app.startRecording()">
+                                    ⏺ Record
+                                </button>
+                                <button class="btn-danger" id="stopRecordBtn"
+                                        onclick="app.stopRecording()" disabled>
+                                    ⏹ Stop
+                                </button>
+                                <button class="btn-success" id="playRecordBtn"
+                                        onclick="app.playRecording()" disabled>
+                                    ▶ Play
+                                </button>
+                            </div>
+                            <div class="recording-status">
+                                <span id="recordingTime">0:00 / 0:10</span>
+                            </div>
+                        </div>
+
+                        <!-- Status Display -->
+                        <div class="mic-status" id="micTestStatus">
+                            <small>Click "Start Test" to check your microphone</small>
+                        </div>
+                    </div>
                 </div>
 
                 <button class="btn-primary" onclick="app.initializeCall()">📞 Initiate Call</button>
@@ -545,6 +803,7 @@
     <!-- Load wallet bundle and SVphone modules -->
     <script src="bundle.js"></script>
     <script src="src/sv_connect/signaling.js"></script>
+    <script src="src/sv_connect/microphone_tester.js"></script>
     <script src="src/sv_connect/peer_connection.js"></script>
     <script src="src/sv_connect/call_manager.js"></script>
     <script src="src/sv_connect/codec_negotiation.js"></script>
@@ -564,6 +823,7 @@
                 this.codecs = null
                 this.quality = null
                 this.security = null
+                this.micTester = null
 
                 this.currentCallToken = null
                 this.currentRole = null
@@ -605,6 +865,7 @@
                 this.codecs = new CodecNegotiation()
                 this.quality = new QualityAdaptation()
                 this.security = new MediaSecurity()
+                this.micTester = new MicrophoneTester((msg, type) => this.log(msg, type))
 
                     // Bind event listeners
                     this.bindEvents()
@@ -1194,6 +1455,126 @@
                 document.getElementById('encryptionValue').textContent = '-'
                 this.currentCallToken = null
                 this.currentRole = null
+            }
+
+            // ============ MICROPHONE TEST METHODS ============
+
+            toggleMicTest() {
+                const content = document.getElementById('micTestContent')
+                const icon = document.getElementById('micTestToggle')
+
+                if (content.classList.contains('collapsed')) {
+                    content.classList.remove('collapsed')
+                    icon.classList.remove('collapsed')
+                    icon.textContent = '▼'
+                } else {
+                    content.classList.add('collapsed')
+                    icon.classList.add('collapsed')
+                    icon.textContent = '▶'
+                }
+            }
+
+            async startMicTest() {
+                try {
+                    if (!this.micTester) {
+                        this.log('Error: Microphone tester not initialized', 'error')
+                        return
+                    }
+
+                    // Update UI
+                    document.getElementById('startMicTestBtn').style.display = 'none'
+                    document.getElementById('stopMicTestBtn').style.display = 'inline-block'
+                    document.getElementById('micVolumeSlider').disabled = false
+                    document.getElementById('micMuteCheckbox').disabled = false
+                    document.getElementById('recordingSection').style.display = 'block'
+                    document.getElementById('startRecordBtn').disabled = false
+
+                    // Start test
+                    await this.micTester.startTest()
+                } catch (error) {
+                    const errorMsg = error.message || error.toString()
+                    this.log(`⚠️  ${errorMsg}`, 'error')
+
+                    // Reset UI on error
+                    document.getElementById('startMicTestBtn').style.display = 'inline-block'
+                    document.getElementById('stopMicTestBtn').style.display = 'none'
+                    document.getElementById('micVolumeSlider').disabled = true
+                    document.getElementById('micMuteCheckbox').disabled = true
+                    document.getElementById('recordingSection').style.display = 'none'
+                }
+            }
+
+            stopMicTest() {
+                try {
+                    if (!this.micTester) {
+                        return
+                    }
+
+                    // Stop test
+                    this.micTester.stopTest()
+
+                    // Update UI
+                    document.getElementById('startMicTestBtn').style.display = 'inline-block'
+                    document.getElementById('stopMicTestBtn').style.display = 'none'
+                    document.getElementById('micVolumeSlider').disabled = true
+                    document.getElementById('micMuteCheckbox').disabled = true
+                    document.getElementById('micMuteCheckbox').checked = false
+                    document.getElementById('micVolumeSlider').value = 100
+                    document.getElementById('volumeValue').textContent = '100%'
+                    document.getElementById('recordingSection').style.display = 'none'
+                    document.getElementById('recordingTime').textContent = '0:00 / 0:10'
+                } catch (error) {
+                    console.error('Error stopping mic test:', error)
+                }
+            }
+
+            updateMicVolume(value) {
+                if (this.micTester && this.micTester.isTestActive) {
+                    this.micTester.setVolume(value)
+                    document.getElementById('volumeValue').textContent = value + '%'
+                }
+            }
+
+            toggleMicMute(isMuted) {
+                if (this.micTester && this.micTester.isTestActive) {
+                    this.micTester.setMute(isMuted)
+                    this.log(`Microphone ${isMuted ? 'muted' : 'unmuted'}`, 'info')
+                }
+            }
+
+            async startRecording() {
+                try {
+                    if (!this.micTester) {
+                        this.log('Error: Microphone tester not initialized', 'error')
+                        return
+                    }
+
+                    await this.micTester.startRecording()
+                } catch (error) {
+                    const errorMsg = error.message || error.toString()
+                    this.log(`Error: ${errorMsg}`, 'error')
+                }
+            }
+
+            stopRecording() {
+                try {
+                    if (this.micTester) {
+                        this.micTester.stopRecording()
+                    }
+                } catch (error) {
+                    console.error('Error stopping recording:', error)
+                }
+            }
+
+            playRecording() {
+                try {
+                    if (this.micTester) {
+                        this.micTester.playRecording()
+                    }
+                } catch (error) {
+                    const errorMsg = error.message || error.toString()
+                    this.log(`Playback error: ${errorMsg}`, 'error')
+                }
             }
 
             log(message, type = 'info') {
