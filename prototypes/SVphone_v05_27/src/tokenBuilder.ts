@@ -201,7 +201,7 @@ export class TokenBuilder {
     // 2. Build proof chain; fetch Merkle proof on demand if entries are empty
     let entries = proofChainEntries
     if (entries.length === 0) {
-      // Unconfirmed TX: verify via ancestor transaction proofs + genesis block header
+      // Unconfirmed TX: Always verify via ancestor transaction proofs + genesis block header
       try {
         // Get the current (unconfirmed) transaction to access its inputs
         const currentTx = await this.provider.getSourceTransaction(currentTxId)
@@ -209,7 +209,8 @@ export class TokenBuilder {
           return { valid: false, chain: { genesisTxId, entries: [] }, reason: 'Unconfirmed TX has no inputs' }
         }
 
-        // Get the ancestor proof (from Input 0, which should be confirmed)
+        // MANDATORY: Get and verify ancestor proof (from Input 0, which must be confirmed)
+        // This proves the input UTXO exists and is confirmed on blockchain
         const input0 = currentTx.inputs[0]
         const ancestorTxId = input0.sourceTXID
         if (!ancestorTxId) {
@@ -221,19 +222,19 @@ export class TokenBuilder {
           return { valid: false, chain: { genesisTxId, entries: [] }, reason: 'No Merkle proof for ancestor transaction' }
         }
 
-        // Verify ancestor proof (proves the input exists and is confirmed)
+        // Verify ancestor proof - MANDATORY: proves input exists and is confirmed
         if (!verifyMerkleProof(ancestorProof)) {
           return { valid: false, chain: { genesisTxId, entries: [] }, reason: 'Invalid Merkle proof for ancestor transaction' }
         }
 
-        // Get genesis block height - try from existing token record first
+        // Get genesis block height: prefer from existing token record, otherwise fetch from genesis proof
         let genesisBlockHeight: number | null = null
         const existingToken = await this.store.getToken(tokenId)
         if (existingToken?.blockHeight && existingToken.blockHeight > 0) {
           genesisBlockHeight = existingToken.blockHeight
           console.debug(`verifyBeforeImport: Using blockHeight=${genesisBlockHeight} from existing token record`)
         } else {
-          // Token not in store yet, fetch genesis proof to get blockHeight
+          // Token not in store yet - must fetch genesis proof to get blockHeight
           const genesisProof = await this.provider.getMerkleProof(genesisTxId)
           if (genesisProof) {
             genesisBlockHeight = genesisProof.blockHeight
