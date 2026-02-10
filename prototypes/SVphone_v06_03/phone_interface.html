@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVphone v06.01 - Decentralized VoIP</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+            color: #b0d4ff;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 25px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .panel h2 {
+            font-size: 1.4em;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #4a9eff;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            transition: all 0.3s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #4a9eff;
+            background: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 10px rgba(74, 158, 255, 0.3);
+        }
+
+        input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        button {
+            width: 100%;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4a9eff 0%, #357abd 100%);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(74, 158, 255, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: #fff;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(17, 153, 142, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #ffa500 0%, #ff8c42 100%);
+            color: #fff;
+        }
+
+        .btn-warning:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 165, 0, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-panel {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.85em;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .status-item:last-child {
+            border-bottom: none;
+        }
+
+        .status-label {
+            opacity: 0.7;
+        }
+
+        .status-value {
+            font-weight: 600;
+            color: #4a9eff;
+        }
+
+        .call-status {
+            text-align: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            margin: 15px 0;
+            font-size: 1.1em;
+        }
+
+        .call-status.ringing {
+            color: #ffa500;
+            animation: pulse 1s infinite;
+        }
+
+        .call-status.connecting {
+            color: #4a9eff;
+            animation: pulse 1s infinite;
+        }
+
+        .call-status.connected {
+            color: #38ef7d;
+            font-weight: bold;
+        }
+
+        .call-status.ended {
+            color: #ff6b6b;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .video-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        video {
+            width: 100%;
+            height: 250px;
+            background: #000;
+            border-radius: 8px;
+            object-fit: cover;
+        }
+
+        .video-label {
+            font-size: 0.85em;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-box {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.8em;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #4a9eff;
+            font-family: 'Monaco', monospace;
+        }
+
+        .incoming-call {
+            background: rgba(255, 165, 0, 0.2);
+            border: 2px solid #ffa500;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .incoming-call h3 {
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .incoming-call p {
+            opacity: 0.9;
+            margin-bottom: 15px;
+            font-size: 0.95em;
+        }
+
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .console {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 30px;
+            font-family: 'Monaco', monospace;
+            font-size: 0.8em;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .console-line {
+            padding: 3px 0;
+            opacity: 0.8;
+        }
+
+        .console-line.error {
+            color: #ff6b6b;
+        }
+
+        .console-line.success {
+            color: #38ef7d;
+        }
+
+        .console-line.warning {
+            color: #ffa500;
+        }
+
+        .console-line.info {
+            color: #4a9eff;
+        }
+
+        .quality-indicator {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .quality-vhd {
+            background: #38ef7d;
+            color: #000;
+        }
+
+        .quality-hd {
+            background: #4a9eff;
+            color: #fff;
+        }
+
+        .quality-sd {
+            background: #ffa500;
+            color: #fff;
+        }
+
+        .quality-ld {
+            background: #ff6b6b;
+            color: #fff;
+        }
+
+        @media (max-width: 1024px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .video-container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📞 SVphone v06.01</h1>
+            <p class="subtitle">Decentralized Voice Calling on BSV Blockchain</p>
+        </header>
+
+        <div class="main-grid">
+            <!-- Left Panel: Call Controls -->
+            <div class="panel">
+                <h2>Call Controls</h2>
+
+                <div class="form-group">
+                    <label for="myAddress">Your BSV Address</label>
+                    <input type="text" id="myAddress" placeholder="Enter your BSV address"
+                           value="1A1z7agoat5dwrQvV">
+                </div>
+
+                <div class="form-group">
+                    <label for="myIp">Your Public IP</label>
+                    <input type="text" id="myIp" placeholder="Will be auto-detected"
+                           value="203.0.113.42">
+                </div>
+
+                <div class="form-group">
+                    <label for="myPort">UDP Port</label>
+                    <input type="number" id="myPort" placeholder="Ephemeral port"
+                           value="54321">
+                </div>
+
+                <div class="form-group">
+                    <label for="calleeAddress">Recipient BSV Address</label>
+                    <input type="text" id="calleeAddress" placeholder="Enter recipient address"
+                           value="1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2">
+                </div>
+
+                <div class="form-group">
+                    <label for="quality">Preferred Quality</label>
+                    <select id="quality">
+                        <option value="hd" selected>HD (2.5 Mbps, 30fps, 1280×720)</option>
+                        <option value="vhd">VHD (5 Mbps, 60fps, 1920×1080)</option>
+                        <option value="sd">SD (500 kbps, 24fps, 640×480)</option>
+                        <option value="ld">LD (100 kbps, 15fps, 320×240)</option>
+                    </select>
+                </div>
+
+                <button class="btn-primary" onclick="app.initializeCall()">📞 Initiate Call</button>
+                <button class="btn-primary" onclick="app.toggleMediaStream()" id="mediaBtn">🎤 Start Media</button>
+
+                <div class="call-status" id="callStatus" style="display:none;">
+                    <span id="callStatusText">Initializing...</span>
+                </div>
+
+                <button class="btn-success" id="acceptBtn" onclick="app.acceptCall()" style="display:none;">✓ Accept</button>
+                <button class="btn-danger" id="rejectBtn" onclick="app.rejectCall()" style="display:none;">✗ Reject</button>
+                <button class="btn-danger" id="endCallBtn" onclick="app.endCall()" style="display:none;">End Call</button>
+
+                <div id="incomingCall" class="incoming-call" style="display:none;">
+                    <h3>📞 Incoming Call</h3>
+                    <p>From: <strong id="incomingFrom"></strong></p>
+                    <div class="button-group">
+                        <button class="btn-success" onclick="app.acceptCall()">Accept</button>
+                        <button class="btn-danger" onclick="app.rejectCall()">Reject</button>
+                    </div>
+                </div>
+
+                <div class="status-panel">
+                    <div class="status-item">
+                        <span class="status-label">Status:</span>
+                        <span class="status-value" id="statusValue">Ready</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Quality:</span>
+                        <span class="status-value" id="qualityValue">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Duration:</span>
+                        <span class="status-value" id="durationValue">0s</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Encryption:</span>
+                        <span class="status-value" id="encryptionValue">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Statistics & Media -->
+            <div class="panel">
+                <h2>Call Statistics & Media</h2>
+
+                <div class="video-container" id="videoContainer" style="display:none;">
+                    <div>
+                        <div class="video-label">Local Camera</div>
+                        <video id="localVideo" autoplay muted playsinline></video>
+                    </div>
+                    <div>
+                        <div class="video-label">Remote Camera</div>
+                        <video id="remoteVideo" autoplay playsinline></video>
+                    </div>
+                </div>
+
+                <div class="stats-grid" id="statsGrid" style="display:none;">
+                    <div class="stat-box">
+                        <div class="stat-label">Video Bitrate</div>
+                        <div class="stat-value" id="videoBitrate">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Audio Bitrate</div>
+                        <div class="stat-value" id="audioBitrate">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Packet Loss</div>
+                        <div class="stat-value" id="packetLoss">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Latency (RTT)</div>
+                        <div class="stat-value" id="latency">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Available BW</div>
+                        <div class="stat-value" id="bandwidth">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Jitter</div>
+                        <div class="stat-value" id="jitter">-</div>
+                    </div>
+                </div>
+
+                <div class="status-panel">
+                    <div class="status-item">
+                        <span class="status-label">Audio Codec:</span>
+                        <span class="status-value" id="audioCodec">Opus</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Video Codec:</span>
+                        <span class="status-value" id="videoCodec">VP9</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Frame Rate:</span>
+                        <span class="status-value" id="frameRate">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Resolution:</span>
+                        <span class="status-value" id="resolution">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Console -->
+        <div class="panel">
+            <h2>Debug Console</h2>
+            <div class="console" id="debugConsole"></div>
+            <button class="btn-warning" onclick="app.clearConsole()" style="margin-top:10px; width: auto;">Clear Console</button>
+        </div>
+    </div>
+
+    <!-- Load all SVphone modules -->
+    <script src="src/sv_connect/signaling.js"></script>
+    <script src="src/sv_connect/peer_connection.js"></script>
+    <script src="src/sv_connect/call_manager.js"></script>
+    <script src="src/sv_connect/codec_negotiation.js"></script>
+    <script src="src/sv_connect/quality_adaptation.js"></script>
+    <script src="src/sv_connect/media_security.js"></script>
+
+    <script>
+        /**
+         * SVphone Phone Interface Application
+         * Main orchestration for v06.01 testing
+         */
+        class SVphoneApp {
+            constructor() {
+                this.callManager = null
+                this.signaling = null
+                this.peerConnection = null
+                this.codecs = null
+                this.quality = null
+                this.security = null
+
+                this.currentCallToken = null
+                this.currentRole = null
+                this.isMediaActive = false
+                this.callStartTime = null
+                this.durationInterval = null
+
+                this.init()
+            }
+
+            init() {
+                this.log('Initializing SVphone v06.01...', 'info')
+
+                // Create all components
+                this.signaling = new CallSignaling()
+                this.peerConnection = new PeerConnection({
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                })
+                this.callManager = new CallManager(this.signaling, this.peerConnection)
+                this.codecs = new CodecNegotiation()
+                this.quality = new QualityAdaptation()
+                this.security = new MediaSecurity()
+
+                // Bind event listeners
+                this.bindEvents()
+
+                this.log('SVphone initialized successfully', 'success')
+            }
+
+            bindEvents() {
+                // Call Manager Events
+                this.callManager.on('call:initiated-session', (session) => {
+                    this.log(`📞 Call initiated to ${session.calleeAddress}`, 'info')
+                    this.currentCallToken = session.callTokenId
+                    this.currentRole = 'caller'
+                    this.updateCallStatus('ringing', 'Call ringing...')
+                })
+
+                this.callManager.on('call:incoming-session', (session) => {
+                    this.log(`📞 Incoming call from ${session.caller}`, 'info')
+                    this.showIncomingCall(session.caller, session.callTokenId)
+                    this.currentCallToken = session.callTokenId
+                    this.currentRole = 'callee'
+                })
+
+                this.callManager.on('call:connected', () => {
+                    this.log('📞 Call connected! Media stream established', 'success')
+                    this.updateCallStatus('connected', 'Call connected')
+                    this.showCallStats()
+                    this.callStartTime = Date.now()
+                    this.startDurationTimer()
+                })
+
+                this.callManager.on('call:ended-session', (data) => {
+                    this.log(`📞 Call ended. Duration: ${(data.duration/1000).toFixed(1)}s`, 'info')
+                    this.resetCallUI()
+                    this.stopDurationTimer()
+                })
+
+                // Quality Adaptation Events
+                this.quality.on('quality:changed', (data) => {
+                    this.log(`📊 Quality changed: ${data.oldQuality} → ${data.newQuality}`, 'warning')
+                    this.updateQuality(data.newQuality)
+                })
+
+                // Call Manager Stats Events
+                this.callManager.on('call:stats-updated', (data) => {
+                    this.updateStats(data.stats)
+                })
+
+                // Peer Connection Events
+                this.peerConnection.on('media:ready', () => {
+                    this.log('🎤 Media stream ready', 'success')
+                    this.attachLocalVideo()
+                })
+
+                this.peerConnection.on('media:track-received', (data) => {
+                    this.log(`📹 Received remote ${data.track.kind} track`, 'info')
+                    if (data.track.kind === 'video') {
+                        this.attachRemoteVideo(data.stream)
+                    }
+                })
+
+                // Security Events
+                this.security.on('security:dtls-connected', () => {
+                    this.log('🔒 DTLS encryption established', 'success')
+                    this.updateEncryption('DTLS v1.2')
+                })
+            }
+
+            async initializeCall() {
+                try {
+                    const address = document.getElementById('myAddress').value
+                    const ip = document.getElementById('myIp').value
+                    const port = parseInt(document.getElementById('myPort').value)
+
+                    if (!address) {
+                        this.log('Error: Enter your BSV address', 'error')
+                        return
+                    }
+
+                    await this.signaling.initialize(address, ip, port)
+                    this.log(`Initialized as ${address}`, 'success')
+
+                    const calleeAddress = document.getElementById('calleeAddress').value
+                    if (!calleeAddress) {
+                        this.log('Error: Enter recipient address', 'error')
+                        return
+                    }
+
+                    const quality = document.getElementById('quality').value
+
+                    // Mock token minting (in real app, would use builder.createToken)
+                    const mockMintFn = async (token) => {
+                        this.log(`Minting call token for ${token.callee}`, 'info')
+                        return {
+                            txId: 'mock_tx_' + Math.random().toString(36).substr(2, 9),
+                            tokenId: 'mock_token_' + Math.random().toString(36).substr(2, 9)
+                        }
+                    }
+
+                    const session = await this.callManager.initiateCall(calleeAddress, {
+                        audio: true,
+                        video: true,
+                        quality: quality,
+                        mintTokenFn: mockMintFn
+                    })
+
+                    this.currentCallToken = session.callTokenId
+                } catch (error) {
+                    this.log(`Error: ${error.message}`, 'error')
+                }
+            }
+
+            async toggleMediaStream() {
+                try {
+                    if (!this.isMediaActive) {
+                        await this.peerConnection.initializeMediaStream({
+                            audio: true,
+                            video: true
+                        })
+                        this.isMediaActive = true
+                        document.getElementById('mediaBtn').textContent = '🎤 Stop Media'
+                        this.log('Media stream started', 'success')
+                    } else {
+                        this.peerConnection.stopMediaStream()
+                        this.isMediaActive = false
+                        document.getElementById('mediaBtn').textContent = '🎤 Start Media'
+                        this.log('Media stream stopped', 'info')
+                    }
+                } catch (error) {
+                    this.log(`Media error: ${error.message}`, 'error')
+                }
+            }
+
+            showIncomingCall(caller, callTokenId) {
+                document.getElementById('incomingCall').style.display = 'block'
+                document.getElementById('incomingFrom').textContent = caller
+                document.getElementById('acceptBtn').style.display = 'inline-block'
+                document.getElementById('rejectBtn').style.display = 'inline-block'
+            }
+
+            async acceptCall() {
+                try {
+                    if (!this.currentCallToken) {
+                        this.log('Error: No active call to accept', 'error')
+                        return
+                    }
+
+                    await this.callManager.acceptCall(this.currentCallToken, {
+                        audio: true,
+                        video: true
+                    })
+
+                    document.getElementById('incomingCall').style.display = 'none'
+                    document.getElementById('acceptBtn').style.display = 'none'
+                    document.getElementById('rejectBtn').style.display = 'none'
+                    document.getElementById('endCallBtn').style.display = 'inline-block'
+
+                    this.log('Call accepted', 'success')
+                } catch (error) {
+                    this.log(`Error accepting call: ${error.message}`, 'error')
+                }
+            }
+
+            rejectCall() {
+                try {
+                    if (!this.currentCallToken) {
+                        this.log('Error: No active call to reject', 'error')
+                        return
+                    }
+
+                    this.callManager.rejectCall(this.currentCallToken, 'user-declined')
+                    this.resetCallUI()
+                    this.log('Call rejected', 'info')
+                } catch (error) {
+                    this.log(`Error rejecting call: ${error.message}`, 'error')
+                }
+            }
+
+            async endCall() {
+                try {
+                    if (!this.currentCallToken) {
+                        this.log('Error: No active call to end', 'error')
+                        return
+                    }
+
+                    await this.callManager.endCall(this.currentCallToken)
+                    this.resetCallUI()
+                    this.log('Call ended', 'info')
+                } catch (error) {
+                    this.log(`Error ending call: ${error.message}`, 'error')
+                }
+            }
+
+            updateCallStatus(status, text) {
+                const statusEl = document.getElementById('callStatus')
+                const statusText = document.getElementById('callStatusText')
+                statusEl.className = `call-status ${status}`
+                statusText.textContent = text
+                statusEl.style.display = 'block'
+                document.getElementById('statusValue').textContent = status.toUpperCase()
+            }
+
+            updateQuality(quality) {
+                document.getElementById('qualityValue').innerHTML =
+                    `<span class="quality-indicator quality-${quality}">${quality.toUpperCase()}</span>`
+            }
+
+            updateEncryption(status) {
+                document.getElementById('encryptionValue').textContent = status
+            }
+
+            showCallStats() {
+                document.getElementById('videoContainer').style.display = 'grid'
+                document.getElementById('statsGrid').style.display = 'grid'
+            }
+
+            updateStats(stats) {
+                if (stats.video?.outbound) {
+                    const bitrate = (stats.video.outbound.bytesSent * 8 / 1000).toFixed(0)
+                    document.getElementById('videoBitrate').textContent = bitrate + ' kbps'
+                }
+                if (stats.audio?.outbound) {
+                    const bitrate = (stats.audio.outbound.bytesSent * 8 / 1000).toFixed(0)
+                    document.getElementById('audioBitrate').textContent = bitrate + ' kbps'
+                }
+                if (stats.video?.inbound) {
+                    const loss = ((stats.video.inbound.packetsLost /
+                        (stats.video.inbound.packetsReceived + stats.video.inbound.packetsLost)) * 100).toFixed(2)
+                    document.getElementById('packetLoss').textContent = loss + '%'
+                    document.getElementById('jitter').textContent =
+                        ((stats.video.inbound.jitter || 0) * 1000).toFixed(0) + ' ms'
+                }
+            }
+
+            attachLocalVideo() {
+                const stream = this.peerConnection.getLocalMediaStream()
+                if (stream) {
+                    document.getElementById('localVideo').srcObject = stream
+                    this.log('Local video attached', 'success')
+                }
+            }
+
+            attachRemoteVideo(stream) {
+                document.getElementById('remoteVideo').srcObject = stream
+                this.log('Remote video attached', 'success')
+            }
+
+            startDurationTimer() {
+                this.durationInterval = setInterval(() => {
+                    if (this.callStartTime) {
+                        const duration = Math.floor((Date.now() - this.callStartTime) / 1000)
+                        const mins = Math.floor(duration / 60)
+                        const secs = duration % 60
+                        document.getElementById('durationValue').textContent =
+                            `${mins}:${secs.toString().padStart(2, '0')}`
+                    }
+                }, 1000)
+            }
+
+            stopDurationTimer() {
+                if (this.durationInterval) {
+                    clearInterval(this.durationInterval)
+                    this.durationInterval = null
+                }
+            }
+
+            resetCallUI() {
+                document.getElementById('callStatus').style.display = 'none'
+                document.getElementById('acceptBtn').style.display = 'none'
+                document.getElementById('rejectBtn').style.display = 'none'
+                document.getElementById('endCallBtn').style.display = 'none'
+                document.getElementById('incomingCall').style.display = 'none'
+                document.getElementById('videoContainer').style.display = 'none'
+                document.getElementById('statsGrid').style.display = 'none'
+                document.getElementById('statusValue').textContent = 'Ready'
+                document.getElementById('qualityValue').textContent = '-'
+                document.getElementById('durationValue').textContent = '0s'
+                document.getElementById('encryptionValue').textContent = '-'
+                this.currentCallToken = null
+                this.currentRole = null
+            }
+
+            log(message, type = 'info') {
+                const console = document.getElementById('debugConsole')
+                const line = document.createElement('div')
+                line.className = `console-line ${type}`
+                const timestamp = new Date().toLocaleTimeString()
+                line.textContent = `[${timestamp}] ${message}`
+                console.appendChild(line)
+                console.scrollTop = console.scrollHeight
+                console.log(`[${type.toUpperCase()}] ${message}`)
+            }
+
+            clearConsole() {
+                document.getElementById('debugConsole').innerHTML = ''
+            }
+        }
+
+        // Initialize application when page loads
+        const app = new SVphoneApp()
+    </script>
+</body>
+</html>

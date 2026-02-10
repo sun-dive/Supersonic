@@ -1,0 +1,13 @@
+{
+  "name": "svphone-v06-01",
+  "version": "0.6.01",
+  "type": "module",
+  "description": "SVphone v06.01 - Media Transport Layer with codec negotiation, quality adaptation, and DTLS-SRTP encryption",
+  "scripts": {
+    "serve": "node serve.mjs",
+    "dev": "node serve.mjs"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^1.0.0"
+  }
+}
