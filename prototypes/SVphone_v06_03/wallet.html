@@ -294,5 +294,34 @@
   </div>
 
   <script src="bundle.js"></script>
+
+  <!-- Share wallet address with other interfaces via localStorage -->
+  <script>
+    // Watch for wallet address changes and sync to localStorage
+    const addressElement = document.getElementById('address');
+
+    const syncAddressToStorage = () => {
+      if (addressElement && addressElement.textContent && addressElement.textContent !== '...') {
+        localStorage.setItem('svphone_wallet_address', addressElement.textContent);
+        console.log('[SVphone] Wallet address synced to localStorage:', addressElement.textContent);
+      }
+    };
+
+    // Check immediately on page load
+    setTimeout(syncAddressToStorage, 1000);
+
+    // Watch for changes (when bundle.js loads/updates the address)
+    if (addressElement) {
+      const observer = new MutationObserver(syncAddressToStorage);
+      observer.observe(addressElement, {
+        childList: true,
+        characterData: true,
+        subtree: true
+      });
+    }
+
+    // Also sync on any visible text changes periodically
+    setInterval(syncAddressToStorage, 5000);
+  </script>
 </body>
 </html>
