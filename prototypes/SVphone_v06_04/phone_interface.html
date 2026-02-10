@@ -641,27 +641,9 @@
                 // If found, we're done
                 if (found) return
 
-                // If not found, show instructions and retry
-                myAddressField.placeholder = '⚠️ Open wallet.html first to load wallet'
-                this.log('⚠️  Wallet not available. Open wallet.html to initialize.', 'warning')
-                this.log('   Checking localStorage every 2 seconds...', 'info')
-
-                // Watch localStorage for changes (when wallet.html saves address)
-                let checkCount = 0
-                const watchStorage = setInterval(() => {
-                    checkCount++
-                    const addr = localStorage.getItem('svphone_wallet_address')
-                    if (addr && addr !== '...' && myAddressField.value !== addr) {
-                        myAddressField.value = addr
-                        this.log(`✓ Address detected in storage: ${addr}`, 'success')
-                        clearInterval(watchStorage)
-                    }
-                    // Stop watching after 30 checks (60 seconds)
-                    if (checkCount >= 30) {
-                        clearInterval(watchStorage)
-                        this.log('   Timeout: Wallet address not found. Please open wallet.html.', 'error')
-                    }
-                }, 2000)
+                // If not found, show helpful message
+                myAddressField.placeholder = 'Open wallet.html to load wallet address'
+                this.log('💡 Wallet not initialized. Open wallet.html first, then return here.', 'info')
             }
 
             autoDetectNetworkConfig() {
