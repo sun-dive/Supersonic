@@ -402,20 +402,17 @@
 
                 <div class="form-group">
                     <label for="myIp">Your Public IP</label>
-                    <input type="text" id="myIp" placeholder="Will be auto-detected"
-                           value="203.0.113.42">
+                    <input type="text" id="myIp" placeholder="Will be auto-detected">
                 </div>
 
                 <div class="form-group">
                     <label for="myPort">UDP Port</label>
-                    <input type="number" id="myPort" placeholder="Ephemeral port"
-                           value="54321">
+                    <input type="number" id="myPort" placeholder="Ephemeral port">
                 </div>
 
                 <div class="form-group">
                     <label for="calleeAddress">Recipient BSV Address</label>
-                    <input type="text" id="calleeAddress" placeholder="Enter recipient address"
-                           value="1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2">
+                    <input type="text" id="calleeAddress" placeholder="Enter recipient address">
                 </div>
 
                 <div class="form-group">
@@ -597,14 +594,28 @@
             }
 
             syncWalletData() {
-                // Get wallet address from bundle.js wallet state
+                const myAddressField = document.getElementById('myAddress')
+
+                // Try 1: Get address from bundle.js wallet (if wallet.html is open in same session)
                 const addressEl = document.getElementById('address')
-                if (addressEl && addressEl.textContent !== '...') {
-                    document.getElementById('myAddress').value = addressEl.textContent
-                    this.log(`Wallet synced: ${addressEl.textContent}`, 'success')
-                } else {
-                    this.log('Warning: Wallet not yet loaded. Open wallet.html first.', 'warning')
+                if (addressEl && addressEl.textContent && addressEl.textContent !== '...') {
+                    myAddressField.value = addressEl.textContent
+                    this.log(`✓ Wallet synced from bundle: ${addressEl.textContent}`, 'success')
+                    return
                 }
+
+                // Try 2: Get address from localStorage (if wallet.html was opened before)
+                const storedAddress = localStorage.getItem('svphone_wallet_address')
+                if (storedAddress) {
+                    myAddressField.value = storedAddress
+                    this.log(`✓ Wallet restored from storage: ${storedAddress}`, 'success')
+                    return
+                }
+
+                // If neither worked, show instructions
+                myAddressField.placeholder = '⚠️ Open wallet.html first to load wallet'
+                this.log('⚠️  Wallet not available. Open wallet.html to initialize.', 'warning')
+                this.log('   Then return here - address will auto-populate', 'info')
             }
 
             bindEvents() {
