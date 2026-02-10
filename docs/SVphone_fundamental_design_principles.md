@@ -9,6 +9,9 @@ Every token set begins with a genesis mint transaction. Once mined into a block,
 
 ### Use cases
 
+#### SVphone
+The simplest and most useful application of the Proof token is to enable a server-less internet phone network, with call initiation transparently and immutably anchored to the blockchain. Providing a safer, cheaper and more private phone architecture than what currently exists today.
+
 #### Blockchain gaming
 Tokens can be used in a multiplayer blockchain game. If NFTs were considered to be keys, then these "keys" could be used to unlock "doors" within the game.
 
@@ -34,11 +37,11 @@ P supports two token modes:
 
 ## SPV Token Verification
 
-A P token can be verified using only three pieces of data: the **Token ID**, the **genesis transaction ID**, and a **block header**.
+A P token is verified in two steps: **Token ID** (local computation) and **Merkle proof verification** (network-based SPV).
 
-### Token ID Derivation
+### Token ID Derivation (Local)
 
-The Token ID is a single SHA-256 hash over the concatenation of:
+The Token ID is a single SHA-256 hash:
 
 ```
 Token ID = SHA-256(genesisTxId || outputIndex LE || immutableChunkBytes)
@@ -50,7 +53,7 @@ where immutableChunkBytes = tokenName + tokenScript + tokenRules
 - `immutableChunkBytes`: The raw pushdata bytes of tokenName, tokenScript, and tokenRules concatenated in order
 - **Important:** tokenAttributes is **mutable** and NOT included in the Token ID. This allows tokenAttributes to be updated on each transfer without affecting token identity.
 
-This is a purely local computation. No network access is required. If any immutable field has been tampered with, the recomputed Token ID will not match the claimed one.
+This is a purely local SHA-256 computation. If any immutable field has been tampered with, the recomputed Token ID will not match the claimed one.
 
 ### Technical Note on Chunk Indices
 
@@ -62,17 +65,30 @@ This distinction is critical for understanding the codec implementation and how 
 
 ### Merkle Proof Verification
 
-Given the genesis transaction ID, the verifier obtains its Merkle proof -- an ordered list of sibling hashes that, combined with the transaction hash, reproduce the block's Merkle root.
+Given a transaction ID, the verifier obtains its Merkle proof -- an ordered list of sibling hashes that, combined with the transaction hash, reproduce the block's Merkle root.
 
-Verification proceeds bottom-up: starting from the double-SHA-256 of the genesis transaction ID, the verifier concatenates each sibling hash (left or right, as indicated by the proof path) and double-SHA-256s the pair at each level. The final output is the computed Merkle root.
+Verification proceeds bottom-up: starting from the double-SHA-256 of the transaction ID, the verifier concatenates each sibling hash (left or right, as indicated by the proof path) and double-SHA-256s the pair at each level. The final output is the computed Merkle root.
 
 ### Block Header Confirmation
 
-The computed Merkle root is compared against the `hashMerkleRoot` field in the block header at the genesis transaction's confirmed height. A match proves the genesis transaction was included in that block. The block header itself is an 80-byte structure whose validity is established by its proof-of-work -- it must hash below the difficulty target for that height.
+The computed Merkle root is compared against the `hashMerkleRoot` field in the block header at the transaction's block height. A match proves the transaction was included in that block. The block header itself is an 80-byte structure whose validity is established by its proof-of-work -- it must hash below the difficulty target for that height.
 
-### Why Only the Genesis Transaction
+### Unconfirmed Token Acceptance (Ancestor Proof)
 
-Transfer transactions do not require independent block header verification. Each transfer spends the previous token UTXO as an input; miners validate that the input exists and is unspent before accepting the transaction into a block. A transfer transaction that references a non-existent or already-spent UTXO is rejected by the network. This is the Bitcoin UTXO model's built-in guarantee -- once a transfer is mined, its validity is implicit.
+When a token arrives in an unconfirmed transfer transaction, it can be accepted immediately using **ancestor proof verification**:
+
+1. Verify Token ID locally (as above)
+2. Get the unconfirmed TX's **Input 0** (references last confirmed TX)
+3. Fetch and verify the Merkle proof for that ancestor transaction
+4. Retrieve genesis blockHeight from token record or genesis proof
+5. Fetch and verify genesis block header
+6. Accept token as `active` without waiting for current TX to confirm
+
+This enables **instant token acceptance**. The ancestor proof proves the funding input is real and confirmed, while the genesis block header proves the token originated legitimately.
+
+### Why Only Genesis and Ancestor
+
+Transfer transactions themselves do not require independent block header verification (except the ancestor for unconfirmed tokens). Each transfer spends the previous token UTXO as an input; miners validate that the input exists and is unspent before accepting the transaction into a block. A transfer transaction that references a non-existent or already-spent UTXO is rejected by the network. This is the Bitcoin UTXO model's built-in guarantee -- once a transfer is mined, its validity is implicit.
 
 The genesis transaction is the only one that creates value from nothing (from the token protocol's perspective). Proving it was mined is sufficient to establish that the token's origin is legitimate and that all subsequent transfers were validated by miners through normal transaction processing.
 
@@ -209,27 +225,29 @@ The genesis transaction is the only one that creates value from nothing (from th
   │    Computed ID must match claimed ID                                    │
   │    ✗ Mismatch → REJECT                                                  │
   │                                                                         │
-  │  Step 2: Obtain Merkle proof                                            │
-  │    Transfer TX: proof chain embedded in OP_RETURN                       │
-  │    Genesis TX: fetch Merkle proof from network                          │
-  │    ✗ No proof available (unconfirmed) → remains in quarantine           │
+  │  Step 2: Verify provenance (confirmed or unconfirmed)                   │
+  │    If confirmed: proof chain in OP_RETURN or fetch from network         │
+  │    If unconfirmed: fetch ancestor proof (Input 0, last confirmed TX)    │
+  │    ✗ No proof available → REJECT                                        │
   │                                                                         │
-  │  Step 3: Verify genesis Merkle proof                                    │
-  │    Hash from txId through proof path → compute Merkle root              │
+  │  Step 3: Verify Merkle proofs                                           │
+  │    For confirmed: Hash genesis txId through proof path → Merkle root    │
+  │    For unconfirmed: Verify ancestor proof + genesis block header        │
   │    (Bitcoin double SHA-256 at each level)                               │
   │    ✗ Invalid proof → REJECT                                             │
   │                                                                         │
   │  Step 4: Confirm against block header                                   │
-  │    Fetch block header at genesis entry's height                         │
+  │    Fetch block header(s): genesis (always), ancestor (if unconfirmed)   │
   │    Block header's Merkle root must match computed root                  │
   │    ✗ Mismatch → REJECT                                                  │
   │                                                                         │
   │  ✓ ALL CHECKS PASS → token accepted into wallet as "active"             │
   │                                                                         │
   │  ┌───────────────────────────────────────────────────────────────┐      │
-  │  │ NOTE: Only the genesis TX's block header is checked.          │      │
-  │  │ Transfer TXs are validated by miners when spent — their       │      │
-  │  │ block inclusion is an implicit guarantee.                     │      │
+  │  │ NOTE: Genesis block header is always checked. For unconfirmed │      │
+  │  │ tokens, ancestor block header is also verified. Transfer TXs  │      │
+  │  │ are validated by miners when spent — their block inclusion    │      │
+  │  │ is an implicit guarantee.                                     │      │
   │  └───────────────────────────────────────────────────────────────┘      │
   └────────────────────────────┬────────────────────────────────────────────┘
                                │
@@ -396,7 +414,9 @@ When the wallet encounters an incoming token:
 
 1. **Token identity check:** Recompute the Token ID from the claimed genesis transaction, output index, and immutable metadata fields (name, script, rules). If the computed ID doesn't match the claimed ID, the token is rejected. Note: tokenAttributes is **mutable** and not part of the Token ID check.
 
-2. **Obtain the Merkle proof:** If the token arrives via a transfer, the proof chain is embedded in the OP_RETURN data. If it's a genesis transaction with no proof chain yet, the wallet fetches the Merkle proof from the network. If no proof is available (transaction not yet confirmed), the token remains in quarantine until a future scan.
+2. **For confirmed tokens:** The proof chain is embedded in OP_RETURN (transfers) or fetched from network (genesis). Verify genesis Merkle proof against block header.
+
+3. **For unconfirmed tokens:** Fetch ancestor proof (from Input 0, the last confirmed TX), verify it, retrieve genesis blockHeight, and verify genesis block header. Accept token as `active` immediately without waiting for current TX to confirm.
 
 3. **Verify the genesis transaction was mined:** Using the Merkle proof for the genesis transaction, the wallet computes the Merkle root by hashing from the transaction ID up through the proof path using Bitcoin's double SHA-256. The computed root must match the root claimed in the proof entry.
 
