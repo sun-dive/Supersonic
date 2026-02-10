@@ -955,21 +955,58 @@
                     })
 
                     this.currentCallToken = session.callTokenId
+                    this.log('✓ Call initiated successfully', 'success')
                 } catch (error) {
-                    this.log(`Error: ${error.message}`, 'error')
+                    // Handle specific media permission errors
+                    if (error.message && error.message.includes('Media permission denied')) {
+                        this.log('⚠️  Please grant microphone/camera permission to make calls. Check your browser settings.', 'error')
+                    } else if (error.message && error.message.includes('Requested device not found')) {
+                        this.log('⚠️  No microphone or camera found. Attempting audio-only call...', 'warning')
+                        // Retry with audio only by attempting the call again
+                        try {
+                            const session = await this.callManager.initiateCall(calleeAddress, {
+                                audio: true,
+                                video: false,
+                                quality: quality,
+                                mintTokenFn: realMintFn
+                            })
+                            this.currentCallToken = session.callTokenId
+                            this.log('✓ Audio-only call initiated', 'success')
+                        } catch (audioError) {
+                            this.log(`Error: ${audioError.message}`, 'error')
+                        }
+                    } else {
+                        this.log(`Error: ${error.message}`, 'error')
+                    }
                 }
             }
 
             async toggleMediaStream() {
                 try {
                     if (!this.isMediaActive) {
-                        await this.peerConnection.initializeMediaStream({
-                            audio: true,
-                            video: true
-                        })
+                        try {
+                            await this.peerConnection.initializeMediaStream({
+                                audio: true,
+                                video: true
+                            })
+                        } catch (error) {
+                            // If audio+video fails, try audio-only
+                            if (error.message && error.message.includes('Requested device not found')) {
+                                this.log('🎥 Video not available, using audio-only', 'warning')
+                                await this.peerConnection.initializeMediaStream({
+                                    audio: true,
+                                    video: false
+                                })
+                            } else if (error.message && error.message.includes('Media permission denied')) {
+                                this.log('⚠️  Please grant microphone permission in browser settings', 'error')
+                                throw error
+                            } else {
+                                throw error
+                            }
+                        }
                         this.isMediaActive = true
                         document.getElementById('mediaBtn').textContent = '🎤 Stop Media'
-                        this.log('Media stream started', 'success')
+                        this.log('✓ Media stream started', 'success')
                     } else {
                         this.peerConnection.stopMediaStream()
                         this.isMediaActive = false
@@ -1005,9 +1042,30 @@
                     document.getElementById('rejectBtn').style.display = 'none'
                     document.getElementById('endCallBtn').style.display = 'inline-block'
 
-                    this.log('Call accepted', 'success')
+                    this.log('✓ Call accepted', 'success')
                 } catch (error) {
-                    this.log(`Error accepting call: ${error.message}`, 'error')
+                    // Handle specific media permission errors
+                    if (error.message && error.message.includes('Media permission denied')) {
+                        this.log('⚠️  Please grant microphone/camera permission to accept calls. Check your browser settings.', 'error')
+                    } else if (error.message && error.message.includes('Requested device not found')) {
+                        this.log('⚠️  No microphone or camera found. Attempting audio-only call...', 'warning')
+                        // Retry with audio only
+                        try {
+                            await this.callManager.acceptCall(this.currentCallToken, {
+                                audio: true,
+                                video: false
+                            })
+                            document.getElementById('incomingCall').style.display = 'none'
+                            document.getElementById('acceptBtn').style.display = 'none'
+                            document.getElementById('rejectBtn').style.display = 'none'
+                            document.getElementById('endCallBtn').style.display = 'inline-block'
+                            this.log('✓ Audio-only call accepted', 'success')
+                        } catch (audioError) {
+                            this.log(`Error accepting call: ${audioError.message}`, 'error')
+                        }
+                    } else {
+                        this.log(`Error accepting call: ${error.message}`, 'error')
+                    }
                 }
             }
 

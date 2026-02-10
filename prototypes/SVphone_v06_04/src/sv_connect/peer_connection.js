@@ -56,21 +56,63 @@ class PeerConnection {
    */
   async initializeMediaStream(options = { audio: true, video: true }) {
     try {
+      // First attempt: Try full audio+video with ideal constraints
       const constraints = {
         audio: options.audio ? this.audioConstraints : false,
         video: options.video ? this.videoConstraints : false
       }
 
-      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
-
-      console.log('[PeerConnection] Media stream initialized:', {
-        audioTracks: this.mediaStream.getAudioTracks().length,
-        videoTracks: this.mediaStream.getVideoTracks().length
-      })
-
-      this.emit('media:ready', { mediaStream: this.mediaStream })
-
-      return this.mediaStream
+      try {
+        this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
+        console.log('[PeerConnection] Media stream initialized:', {
+          audioTracks: this.mediaStream.getAudioTracks().length,
+          videoTracks: this.mediaStream.getVideoTracks().length
+        })
+        this.emit('media:ready', { mediaStream: this.mediaStream })
+        return this.mediaStream
+      } catch (initialError) {
+        // If video constraints are too strict, try with relaxed constraints
+        if (options.video && initialError.name !== 'NotAllowedError') {
+          console.warn('[PeerConnection] Video constraints too strict, trying with relaxed constraints:', initialError.message)
+          const relaxedConstraints = {
+            audio: options.audio ? this.audioConstraints : false,
+            video: options.video ? true : false  // Just request video without constraints
+          }
+          try {
+            this.mediaStream = await navigator.mediaDevices.getUserMedia(relaxedConstraints)
+            console.log('[PeerConnection] Media stream initialized with relaxed constraints:', {
+              audioTracks: this.mediaStream.getAudioTracks().length,
+              videoTracks: this.mediaStream.getVideoTracks().length
+            })
+            this.emit('media:ready', { mediaStream: this.mediaStream })
+            return this.mediaStream
+          } catch (relaxedError) {
+            // If video still fails, try audio-only
+            if (options.audio) {
+              console.warn('[PeerConnection] Video unavailable, falling back to audio-only:', relaxedError.message)
+              const audioOnlyConstraints = {
+                audio: this.audioConstraints,
+                video: false
+              }
+              this.mediaStream = await navigator.mediaDevices.getUserMedia(audioOnlyConstraints)
+              console.log('[PeerConnection] Audio-only stream initialized:', {
+                audioTracks: this.mediaStream.getAudioTracks().length
+              })
+              this.emit('media:ready', { mediaStream: this.mediaStream, audioOnly: true })
+              return this.mediaStream
+            } else {
+              throw relaxedError
+            }
+          }
+        } else if (initialError.name === 'NotAllowedError') {
+          // Permission denied - this needs user action
+          console.error('[PeerConnection] Permission denied by user:', initialError.message)
+          this.emit('media:permission-denied', { error: initialError })
+          throw new Error('Media permission denied. Please grant permission to access microphone and camera.')
+        } else {
+          throw initialError
+        }
+      }
     } catch (error) {
       console.error('[PeerConnection] Failed to get media stream:', error)
       this.emit('media:error', { error })
