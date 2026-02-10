@@ -305,17 +305,22 @@
 
     const syncAddressToStorage = () => {
       if (addressElement && addressElement.textContent && addressElement.textContent !== '...') {
-        localStorage.setItem('svphone_wallet_address', addressElement.textContent);
-        console.log('[SVphone] Wallet address synced to localStorage:', addressElement.textContent);
+        const addr = addressElement.textContent.trim();
+        localStorage.setItem('svphone_wallet_address', addr);
+        console.log('[SVphone Wallet] Address synced to localStorage:', addr);
       }
     };
 
-    // Check immediately on page load
-    setTimeout(syncAddressToStorage, 1000);
+    // Multiple sync attempts with increasing delays
+    setTimeout(syncAddressToStorage, 500);   // Quick check
+    setTimeout(syncAddressToStorage, 1500);  // After bundle.js loads
+    setTimeout(syncAddressToStorage, 3000);  // After UI renders
 
     // Watch for changes (when bundle.js loads/updates the address)
     if (addressElement) {
-      const observer = new MutationObserver(syncAddressToStorage);
+      const observer = new MutationObserver(() => {
+        syncAddressToStorage();
+      });
       observer.observe(addressElement, {
         childList: true,
         characterData: true,
@@ -323,8 +328,8 @@
       });
     }
 
-    // Also sync on any visible text changes periodically
-    setInterval(syncAddressToStorage, 5000);
+    // Aggressive polling every 2 seconds (for debugging)
+    setInterval(syncAddressToStorage, 2000);
   </script>
 </body>
 </html>

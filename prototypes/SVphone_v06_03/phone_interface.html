@@ -601,27 +601,51 @@
 
             syncWalletData() {
                 const myAddressField = document.getElementById('myAddress')
+                let found = false
 
                 // Try 1: Get address from bundle.js wallet (if wallet.html is open in same session)
                 const addressEl = document.getElementById('address')
                 if (addressEl && addressEl.textContent && addressEl.textContent !== '...') {
-                    myAddressField.value = addressEl.textContent
-                    this.log(`✓ Wallet synced from bundle: ${addressEl.textContent}`, 'success')
-                    return
+                    const addr = addressEl.textContent.trim()
+                    myAddressField.value = addr
+                    this.log(`✓ Wallet synced from bundle: ${addr}`, 'success')
+                    found = true
                 }
 
                 // Try 2: Get address from localStorage (if wallet.html was opened before)
-                const storedAddress = localStorage.getItem('svphone_wallet_address')
-                if (storedAddress) {
-                    myAddressField.value = storedAddress
-                    this.log(`✓ Wallet restored from storage: ${storedAddress}`, 'success')
-                    return
+                if (!found) {
+                    const storedAddress = localStorage.getItem('svphone_wallet_address')
+                    if (storedAddress && storedAddress !== '...') {
+                        myAddressField.value = storedAddress
+                        this.log(`✓ Wallet restored from storage: ${storedAddress}`, 'success')
+                        found = true
+                    }
                 }
 
-                // If neither worked, show instructions
+                // If found, we're done
+                if (found) return
+
+                // If not found, show instructions and retry
                 myAddressField.placeholder = '⚠️ Open wallet.html first to load wallet'
                 this.log('⚠️  Wallet not available. Open wallet.html to initialize.', 'warning')
-                this.log('   Then return here - address will auto-populate', 'info')
+                this.log('   Checking localStorage every 2 seconds...', 'info')
+
+                // Watch localStorage for changes (when wallet.html saves address)
+                let checkCount = 0
+                const watchStorage = setInterval(() => {
+                    checkCount++
+                    const addr = localStorage.getItem('svphone_wallet_address')
+                    if (addr && addr !== '...' && myAddressField.value !== addr) {
+                        myAddressField.value = addr
+                        this.log(`✓ Address detected in storage: ${addr}`, 'success')
+                        clearInterval(watchStorage)
+                    }
+                    // Stop watching after 30 checks (60 seconds)
+                    if (checkCount >= 30) {
+                        clearInterval(watchStorage)
+                        this.log('   Timeout: Wallet address not found. Please open wallet.html.', 'error')
+                    }
+                }, 2000)
             }
 
             bindEvents() {
