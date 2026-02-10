@@ -1042,7 +1042,7 @@ SPV verification gate for token import. Called by both `tryAutoImport()` and `ch
 5. **Fetch and verify genesis block header:** Confirm genesis TX is real via block header at that height
 6. Return `{ valid: true, chain: {}, reason: 'Verified via ancestor proof and genesis block header' }`
 
-**Key design principle:** Token ID verification is purely local (SHA-256 computation). Unconfirmed tokens can be verified and accepted immediately using ancestor proofs, without waiting for the current transaction to confirm on-chain. Genesis and ancestor block headers provide the SPV guarantee that these transactions are genuine. Transfer TXs themselves are validated by miners when spent, so their block inclusion is implicit.
+**Key design principle:** Token ID verification is purely local (SHA-256 computation). Unconfirmed tokens can be verified and accepted immediately using ancestor proofs, without waiting for the current transaction to confirm on-chain. Genesis block header provides the guarantee that the token is genuine. Transfer TXs themselves are validated by miners when spent, so their block inclusion is implicit.
 
 #### pollForProof(tokenId, txId)
 

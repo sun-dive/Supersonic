@@ -30,6 +30,8 @@ Reply with a concise summary of the latest code base and design.
 
 Reply with a concise summary of how close to the P_fundamental_design_principles.md document is the latest code and in which areas does it deviate.
 
+Read and understand the documments in this folder BRC-100
+
 
 ## Key Concepts to Understand
 
