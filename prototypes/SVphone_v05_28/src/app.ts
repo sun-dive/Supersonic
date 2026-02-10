@@ -142,6 +142,10 @@ function init() {
   builder = new TokenBuilder(provider, store, key)
   fileCache = new FileCache()
 
+  // Expose to window for access from other pages (e.g., phone_interface.html)
+  ;(window as any).tokenBuilder = builder
+  ;(window as any).tokenStore = store
+
   // Migrate: copy token-level stateData to UTXOs that don't have it
   migrateFungibleStateData()
 

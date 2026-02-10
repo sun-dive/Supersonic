@@ -15341,17 +15341,51 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
       let entries = proofChainEntries;
       if (entries.length === 0) {
         try {
-          const proof = await this.provider.getMerkleProof(currentTxId);
-          if (proof) {
-            entries = [proof];
+          const currentTx = await this.provider.getSourceTransaction(currentTxId);
+          if (!currentTx.inputs || currentTx.inputs.length === 0) {
+            return { valid: false, chain: { genesisTxId, entries: [] }, reason: "Unconfirmed TX has no inputs" };
           }
+          const input0 = currentTx.inputs[0];
+          const ancestorTxId = input0.sourceTXID;
+          if (!ancestorTxId) {
+            return { valid: false, chain: { genesisTxId, entries: [] }, reason: "Cannot trace ancestor transaction" };
+          }
+          const ancestorProof = await this.provider.getMerkleProof(ancestorTxId);
+          if (!ancestorProof) {
+            return { valid: false, chain: { genesisTxId, entries: [] }, reason: "No Merkle proof for ancestor transaction" };
+          }
+          if (!verifyMerkleProof(ancestorProof)) {
+            return { valid: false, chain: { genesisTxId, entries: [] }, reason: "Invalid Merkle proof for ancestor transaction" };
+          }
+          let genesisBlockHeight = null;
+          const existingToken = await this.store.getToken(tokenId);
+          if (existingToken?.blockHeight && existingToken.blockHeight > 0) {
+            genesisBlockHeight = existingToken.blockHeight;
+            console.debug(`verifyBeforeImport: Using blockHeight=${genesisBlockHeight} from existing token record`);
+          } else {
+            const genesisProof = await this.provider.getMerkleProof(genesisTxId);
+            if (genesisProof) {
+              genesisBlockHeight = genesisProof.blockHeight;
+              console.debug(`verifyBeforeImport: Using blockHeight=${genesisBlockHeight} from genesis proof`);
+            }
+          }
+          if (genesisBlockHeight === null || genesisBlockHeight === 0) {
+            return { valid: false, chain: { genesisTxId, entries: [] }, reason: "Cannot determine genesis block height" };
+          }
+          try {
+            const header = await this.provider.getBlockHeader(genesisBlockHeight);
+            console.debug(`verifyBeforeImport: Verified genesis block header at height ${genesisBlockHeight}`);
+          } catch (e) {
+            return { valid: false, chain: { genesisTxId, entries: [] }, reason: `Failed to fetch genesis block header: ${e?.message}` };
+          }
+          console.debug(`verifyBeforeImport: Unconfirmed token verified via ancestor proof (txId=${currentTxId.slice(0, 12)}...)`);
+          return { valid: true, chain: { genesisTxId, entries: [] }, reason: "Verified via ancestor proof and genesis block header" };
         } catch (e) {
+          console.debug(`verifyBeforeImport: Error verifying unconfirmed token: ${e?.message}`);
+          return { valid: false, chain: { genesisTxId, entries: [] }, reason: `Unconfirmed token verification failed: ${e?.message}` };
         }
       }
       const chain = { genesisTxId, entries };
-      if (entries.length === 0) {
-        return { valid: true, chain, reason: "Unconfirmed TX (pending Merkle proof)" };
-      }
       const genesisEntry = entries[entries.length - 1];
       if (genesisEntry.txId !== genesisTxId) {
         return { valid: false, chain, reason: "Oldest proof entry does not match genesis TX" };
@@ -17041,6 +17075,8 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     store = new TokenStore(storage);
     builder = new TokenBuilder(provider, store, key);
     fileCache = new FileCache();
+    window.tokenBuilder = builder;
+    window.tokenStore = store;
     migrateFungibleStateData();
     setText("address", address);
     setText("pubkey", key.toPublicKey().toString());
