@@ -575,16 +575,25 @@
             }
 
             init() {
-                this.log('Initializing SVphone v06.01...', 'info')
+                try {
+                    this.log('Initializing SVphone v06.01...', 'info')
 
-                // Sync wallet data from shared state (wallet.html)
-                this.syncWalletData()
+                    // Sync wallet data from shared state (wallet.html)
+                    try {
+                        this.syncWalletData()
+                    } catch (e) {
+                        this.log(`⚠️  Wallet sync error: ${e.message}`, 'error')
+                    }
 
-                // Auto-detect IP and generate ephemeral port
-                this.autoDetectNetworkConfig()
+                    // Auto-detect IP and generate ephemeral port
+                    try {
+                        this.autoDetectNetworkConfig()
+                    } catch (e) {
+                        this.log(`⚠️  Network config error: ${e.message}`, 'error')
+                    }
 
-                // Create all components
-                this.signaling = new CallSignaling()
+                    // Create all components
+                    this.signaling = new CallSignaling()
                 this.peerConnection = new PeerConnection({
                     iceServers: [
                         { urls: 'stun:stun.l.google.com:19302' },
@@ -596,10 +605,14 @@
                 this.quality = new QualityAdaptation()
                 this.security = new MediaSecurity()
 
-                // Bind event listeners
-                this.bindEvents()
+                    // Bind event listeners
+                    this.bindEvents()
 
-                this.log('SVphone initialized successfully', 'success')
+                    this.log('SVphone initialized successfully', 'success')
+                } catch (error) {
+                    this.log(`❌ Initialization failed: ${error.message}`, 'error')
+                    console.error('[SVphone] Init error:', error)
+                }
             }
 
             syncWalletData() {
@@ -1025,8 +1038,27 @@
             }
         }
 
-        // Initialize application when page loads
-        const app = new SVphoneApp()
+        // Initialize application when DOM is ready
+        let app = null
+
+        function initApp() {
+            try {
+                console.log('[SVphone] Initializing application...')
+                app = new SVphoneApp()
+                console.log('[SVphone] Application initialized successfully')
+            } catch (error) {
+                console.error('[SVphone] Initialization error:', error)
+                console.error('[SVphone] Stack:', error.stack)
+                alert('SVphone initialization failed: ' + error.message)
+            }
+        }
+
+        // Wait for DOM to be fully loaded
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initApp)
+        } else {
+            initApp()
+        }
     </script>
 </body>
 </html>
