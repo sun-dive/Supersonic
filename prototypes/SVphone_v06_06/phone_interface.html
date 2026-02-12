@@ -816,7 +816,13 @@
 
                 <div class="form-group">
                     <label for="calleeAddress">Recipient BSV Address</label>
-                    <input type="text" id="calleeAddress" placeholder="Enter recipient address">
+                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                        <input type="text" id="calleeAddress" placeholder="Enter recipient address" style="flex: 1;">
+                        <button id="lastCalledBtn" style="background: #30363d; padding: 8px 12px; border-radius: 4px; color: #8b949e; cursor: pointer; display: none; white-space: nowrap;" onclick="app.quickDial()">↲ Redial</button>
+                    </div>
+                    <div id="lastCalledInfo" style="font-size: 0.85em; color: #8b949e; display: none;">
+                        Last called: <strong id="lastCalledAddress"></strong>
+                    </div>
                 </div>
 
                 <div class="call-status" id="callStatus" style="display:none;">
@@ -976,6 +982,13 @@
                         this.log(`⚠️  Wallet sync error: ${e.message}`, 'error')
                     }
 
+                    // Load last called address (phone UI local history)
+                    try {
+                        this.loadLastCalled()
+                    } catch (e) {
+                        this.log(`⚠️  Last called load error: ${e.message}`, 'error')
+                    }
+
                     // Auto-detect IP and generate ephemeral port
                     try {
                         this.autoDetectNetworkConfig()
@@ -1069,6 +1082,37 @@
                 // If not found, show helpful message
                 myAddressField.placeholder = 'Open wallet.html to load wallet address'
                 this.log('💡 Wallet not initialized. Open wallet.html first, then return here.', 'info')
+            }
+
+            loadLastCalled() {
+                const lastCalledAddress = localStorage.getItem('svphone_phone_last_called_address')
+                const lastCalledBtn = document.getElementById('lastCalledBtn')
+                const lastCalledInfo = document.getElementById('lastCalledInfo')
+
+                if (lastCalledAddress && lastCalledAddress.trim()) {
+                    document.getElementById('lastCalledAddress').textContent = lastCalledAddress
+                    lastCalledBtn.style.display = 'block'
+                    lastCalledInfo.style.display = 'block'
+                } else {
+                    lastCalledBtn.style.display = 'none'
+                    lastCalledInfo.style.display = 'none'
+                }
+            }
+
+            saveLastCalled(address) {
+                if (address && address.trim()) {
+                    localStorage.setItem('svphone_phone_last_called_address', address.trim())
+                    this.loadLastCalled()
+                }
+            }
+
+            quickDial() {
+                const lastCalledAddress = localStorage.getItem('svphone_phone_last_called_address')
+                if (lastCalledAddress) {
+                    document.getElementById('calleeAddress').value = lastCalledAddress
+                    this.log(`📞 Quick dial: ${lastCalledAddress}`, 'info')
+                    this.initializeCall()
+                }
             }
 
             autoDetectNetworkConfig() {
@@ -1325,6 +1369,9 @@
                         }
                         return
                     }
+
+                    // Save this address as the last called address
+                    this.saveLastCalled(calleeAddress)
 
                     const quality = document.getElementById('quality').value
 
