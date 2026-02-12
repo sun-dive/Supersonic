@@ -1676,17 +1676,79 @@
                         return
                     }
 
+                    // Get recipient's connection data
+                    const recipientAddress = document.getElementById('myAddress').value
+                    const recipientIp = document.getElementById('myIp').value
+                    const recipientPort = parseInt(document.getElementById('myPort').value)
+
+                    if (!recipientAddress || !recipientIp || !recipientPort) {
+                        this.log('⚠️  Missing connection data (address, IP, or port)', 'error')
+                        return
+                    }
+
+                    // Get the received call token from store
+                    const tokenStore = window.tokenStore
+                    if (!tokenStore) {
+                        this.log('Error: Token store not available', 'error')
+                        return
+                    }
+
+                    const receivedToken = await tokenStore.getToken(this.currentCallToken)
+                    if (!receivedToken) {
+                        this.log('Error: Call token not found in store', 'error')
+                        return
+                    }
+
+                    // Update token attributes with recipient's connection data
+                    // Generate a random session key (32 bytes, base64 encoded)
+                    const keyBytes = new Uint8Array(32)
+                    crypto.getRandomValues(keyBytes)
+                    const recipientSessionKey = btoa(String.fromCharCode(...keyBytes))
+                    const updatedAttributes = {
+                        ...JSON.parse(receivedToken.tokenAttributes || '{}'),
+                        recipientAddress: recipientAddress,
+                        recipientIp: recipientIp,
+                        recipientPort: recipientPort,
+                        recipientSessionKey: recipientSessionKey
+                    }
+                    const updatedAttributesJson = JSON.stringify(updatedAttributes)
+                    const updatedAttributesHex = Array.from(new TextEncoder().encode(updatedAttributesJson))
+                        .map(b => b.toString(16).padStart(2, '0'))
+                        .join('')
+
+                    // Call manager accepts the call
                     await this.callManager.acceptCall(this.currentCallToken, {
                         audio: true,
                         video: true
                     })
+
+                    // Send the token back to the caller
+                    const tokenBuilder = window.tokenBuilder
+                    if (tokenBuilder) {
+                        try {
+                            const callerAddress = receivedToken.caller || JSON.parse(receivedToken.tokenAttributes || '{}').caller
+                            if (callerAddress) {
+                                this.log(`📤 Sending token back to caller ${callerAddress}...`, 'info')
+                                // Transfer the token back to caller with updated attributes
+                                const transferResult = await tokenBuilder.transfer(
+                                    this.currentCallToken,
+                                    callerAddress,
+                                    ''  // No message needed
+                                )
+                                this.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
+                            }
+                        } catch (transferError) {
+                            this.log(`⚠️  Could not send token back: ${transferError.message}`, 'warning')
+                            // Don't fail the acceptance if transfer fails - local acceptance is still valid
+                        }
+                    }
 
                     document.getElementById('incomingCall').style.display = 'none'
                     document.getElementById('acceptBtn').style.display = 'none'
                     document.getElementById('rejectBtn').style.display = 'none'
                     document.getElementById('endCallBtn').style.display = 'inline-block'
 
-                    this.log('✓ Call accepted', 'success')
+                    this.log('✓ Call accepted and token sent back to caller', 'success')
                 } catch (error) {
                     const errorMsg = error.message || error.toString()
 
@@ -1697,15 +1759,45 @@
                         this.log('⚠️  No microphone or camera found. Attempting audio-only call...', 'warning')
                         // Retry with audio only
                         try {
-                            await this.callManager.acceptCall(this.currentCallToken, {
-                                audio: true,
-                                video: false
-                            })
+                            // Get recipient's connection data
+                            const recipientAddress = document.getElementById('myAddress').value
+                            const recipientIp = document.getElementById('myIp').value
+                            const recipientPort = parseInt(document.getElementById('myPort').value)
+
+                            if (recipientAddress && recipientIp && recipientPort) {
+                                await this.callManager.acceptCall(this.currentCallToken, {
+                                    audio: true,
+                                    video: false
+                                })
+
+                                // Send the token back to the caller
+                                const tokenBuilder = window.tokenBuilder
+                                const tokenStore = window.tokenStore
+                                if (tokenBuilder && tokenStore) {
+                                    const receivedToken = await tokenStore.getToken(this.currentCallToken)
+                                    if (receivedToken) {
+                                        const callerAddress = receivedToken.caller || JSON.parse(receivedToken.tokenAttributes || '{}').caller
+                                        if (callerAddress) {
+                                            try {
+                                                const transferResult = await tokenBuilder.transfer(
+                                                    this.currentCallToken,
+                                                    callerAddress,
+                                                    ''
+                                                )
+                                                this.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
+                                            } catch (transferError) {
+                                                this.log(`⚠️  Could not send token back: ${transferError.message}`, 'warning')
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             document.getElementById('incomingCall').style.display = 'none'
                             document.getElementById('acceptBtn').style.display = 'none'
                             document.getElementById('rejectBtn').style.display = 'none'
                             document.getElementById('endCallBtn').style.display = 'inline-block'
-                            this.log('✓ Audio-only call accepted', 'success')
+                            this.log('✓ Audio-only call accepted and token sent back', 'success')
                         } catch (audioError) {
                             const audioErrorMsg = audioError.message || audioError.toString()
                             this.log(`Error accepting call: ${audioErrorMsg}`, 'error')
