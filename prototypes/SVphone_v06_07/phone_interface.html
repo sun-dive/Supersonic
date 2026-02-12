@@ -1014,6 +1014,13 @@
                     // Bind event listeners
                     this.bindEvents()
 
+                    // Start background polling for incoming calls
+                    try {
+                        this.startBackgroundPolling()
+                    } catch (e) {
+                        this.log(`⚠️  Could not start background polling: ${e.message}`, 'warning')
+                    }
+
                     this.log('SVphone initialized successfully', 'success')
                 } catch (error) {
                     this.log(`❌ Initialization failed: ${error.message}`, 'error')
@@ -1342,6 +1349,50 @@
                     this.log('🔒 DTLS encryption established', 'success')
                     this.updateEncryption('DTLS v1.2')
                 })
+            }
+
+            startBackgroundPolling() {
+                // Start listening for incoming call tokens in background
+                // This runs continuously so recipient can receive calls anytime
+                const tokenBuilder = window.tokenBuilder
+                const myAddress = document.getElementById('myAddress')?.value
+
+                if (!tokenBuilder || !myAddress) {
+                    return  // Wait until wallet is loaded
+                }
+
+                try {
+                    const checkIncomingTokensFn = async (address) => {
+                        try {
+                            const tokens = await tokenBuilder.checkIncomingTokens(() => {})
+                            // Filter for call tokens where this address is the recipient
+                            return tokens.filter(t =>
+                                (t.tokenName === 'svphone-call-v1') &&
+                                (t.callee === address || t.stateData?.callee === address ||
+                                 (t.tokenAttributes && JSON.parse(t.tokenAttributes || '{}').callee === address))
+                            )
+                        } catch (error) {
+                            console.error('[BgPolling] Error checking tokens:', error)
+                            return []
+                        }
+                    }
+
+                    const verifyTokenFn = async (token) => {
+                        try {
+                            const result = await tokenBuilder.verifyToken(token.tokenId)
+                            return result
+                        } catch (error) {
+                            console.error('[BgPolling] Error verifying token:', error)
+                            return { valid: false, reason: error.message }
+                        }
+                    }
+
+                    // Start polling (5 second interval)
+                    this.signaling.startPolling(checkIncomingTokensFn, verifyTokenFn)
+                    this.log('📞 Background polling for incoming calls started', 'success')
+                } catch (error) {
+                    console.error('[BgPolling] Failed to start:', error)
+                }
             }
 
             async initializeCall() {
