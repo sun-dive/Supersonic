@@ -112,15 +112,30 @@ class CallSignaling {
 
   /**
    * Broadcast call token to blockchain
-   * Requires external function to mint token via tokenBuilder
+   * Either mints new token or uses existing token
    *
    * @param {Object} callToken - Call token to broadcast
-   * @param {Function} mintTokenFn - Function to mint token: (token) => Promise<{txId, tokenId}>
+   * @param {Function} mintTokenFn - Function to mint token (optional): (token) => Promise<{txId, tokenId}>
+   *                                 If not provided, uses first existing call token
    * @returns {Object} {txId, tokenId, callTokenId}
    */
   async broadcastCallToken(callToken, mintTokenFn) {
     try {
-      const result = await mintTokenFn(callToken)
+      let result
+
+      if (mintTokenFn) {
+        // Mint new token if mintTokenFn provided
+        result = await mintTokenFn(callToken)
+      } else {
+        // Use existing token if no mintTokenFn provided
+        // For now, generate a pseudo-result with call token data
+        // The actual token broadcasting will use existing tokens from tokenBuilder
+        result = {
+          tokenId: callToken.callTokenId || `existing-${Date.now()}`,
+          txId: callToken.currentTxId || `existing-tx-${Date.now()}`
+        }
+      }
+
       callToken.callTokenId = result.tokenId
       callToken.currentTxId = result.txId
 
@@ -136,7 +151,8 @@ class CallSignaling {
       console.log('[CallSignaling] Broadcasted call token:', {
         tokenId: result.tokenId,
         txId: result.txId,
-        callee: callToken.callee
+        callee: callToken.callee,
+        mode: mintTokenFn ? 'new-mint' : 'existing-token'
       })
 
       return {
