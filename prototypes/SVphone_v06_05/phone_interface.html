@@ -1358,10 +1358,79 @@
                         this.log(`⚠️  Failed to start polling: ${error.message}`, 'warning')
                     }
 
-                    // ============ CHECK AND MINT CALL TOKENS ============
+                    // ============ CHECK FOR CALL TOKENS ============
                     if (this.isMintPending) {
                         this.log('⏳ Mint already in progress. Please wait...', 'warning')
                         return
+                    }
+
+                    // Define realMintFn to create call tokens (always available)
+                    const realMintFn = async (token) => {
+                        this.log(`Creating call token for ${token.callee}`, 'info')
+                        try {
+                            // Encode call attributes as JSON for attributes field
+                            const attributesJson = JSON.stringify({
+                                caller: token.caller,
+                                callee: token.callee,
+                                senderIp: token.senderIp,
+                                senderPort: token.senderPort,
+                                sessionKey: token.sessionKey,
+                                codec: token.codec,
+                                quality: token.quality,
+                                mediaTypes: token.mediaTypes
+                            })
+                            const attributesHex = Array.from(new TextEncoder().encode(attributesJson))
+                                .map(b => b.toString(16).padStart(2, '0'))
+                                .join('')
+
+                            // Encode call state as JSON for state field
+                            const stateJson = JSON.stringify({
+                                status: token.status,
+                                initiatedAt: token.initiatedAt,
+                                timestamp: token.timestamp
+                            })
+                            const stateHex = Array.from(new TextEncoder().encode(stateJson))
+                                .map(b => b.toString(16).padStart(2, '0'))
+                                .join('')
+
+                            // Create new token
+                            const result = await tokenBuilder.createGenesis({
+                                tokenName: token.tokenName || 'svphone-call-v1',
+                                tokenScript: token.tokenScript || '',
+                                attributes: attributesHex || '00',
+                                supply: token.tokenRules?.supply || 1,
+                                divisibility: token.tokenRules?.divisibility || 0,
+                                restrictions: token.tokenRules?.restrictions || 0,
+                                rulesVersion: token.tokenRules?.version || 1,
+                                stateData: stateHex
+                            })
+
+                            const tokenId = result.tokenIds?.[0] || result.tokenId
+                            const genesisTx = result.txId
+
+                            this.log(`✓ Token created: ${tokenId}`, 'success')
+                            this.log(`Genesis TX: ${genesisTx}`, 'success')
+                            this.log(`View on blockchain: https://whatsonchain.com/tx/${genesisTx}`, 'info')
+
+                            // Poll for Merkle proof
+                            this.log('⏳ Polling for Merkle proof (may take ~10 minutes)...', 'info')
+                            tokenBuilder.pollForProof(tokenId, result.txId, (msg) => {
+                                this.log(`Proof status: ${msg}`, 'debug')
+                            }).then((found) => {
+                                if (found) {
+                                    this.log('✓ Merkle proof confirmed - token is now fully verified', 'success')
+                                    this.updateCallButtonStatus('confirmed')
+                                    this.log('✓✓ Call connected!', 'success')
+                                }
+                            }).catch(err => {
+                                this.log(`Error polling for proof: ${err.message}`, 'warning')
+                            })
+
+                            return { tokenId, txId: result.txId, tokenIds: result.tokenIds }
+                        } catch (err) {
+                            this.log(`Token creation failed: ${err.message}`, 'error')
+                            throw err
+                        }
                     }
 
                     const hasCallTokens = await this.checkForCallTokens()
@@ -1369,75 +1438,6 @@
                         // No tokens available - mint new ones
                         this.log('📋 No call tokens found. Minting new tokens...', 'info')
                         this.updateCallButtonStatus('minting')
-
-                        // Define realMintFn to create new call tokens when needed
-                        const realMintFn = async (token) => {
-                            this.log(`Creating call token for ${token.callee}`, 'info')
-                            try {
-                                // Encode call attributes as JSON for attributes field
-                                const attributesJson = JSON.stringify({
-                                    caller: token.caller,
-                                    callee: token.callee,
-                                    senderIp: token.senderIp,
-                                    senderPort: token.senderPort,
-                                    sessionKey: token.sessionKey,
-                                    codec: token.codec,
-                                    quality: token.quality,
-                                    mediaTypes: token.mediaTypes
-                                })
-                                const attributesHex = Array.from(new TextEncoder().encode(attributesJson))
-                                    .map(b => b.toString(16).padStart(2, '0'))
-                                    .join('')
-
-                                // Encode call state as JSON for state field
-                                const stateJson = JSON.stringify({
-                                    status: token.status,
-                                    initiatedAt: token.initiatedAt,
-                                    timestamp: token.timestamp
-                                })
-                                const stateHex = Array.from(new TextEncoder().encode(stateJson))
-                                    .map(b => b.toString(16).padStart(2, '0'))
-                                    .join('')
-
-                                // Create new token
-                                const result = await tokenBuilder.createGenesis({
-                                    tokenName: token.tokenName || 'svphone-call-v1',
-                                    tokenScript: token.tokenScript || '',
-                                    attributes: attributesHex || '00',
-                                    supply: token.tokenRules?.supply || 1,
-                                    divisibility: token.tokenRules?.divisibility || 0,
-                                    restrictions: token.tokenRules?.restrictions || 0,
-                                    rulesVersion: token.tokenRules?.version || 1,
-                                    stateData: stateHex
-                                })
-
-                                const tokenId = result.tokenIds?.[0] || result.tokenId
-                                const genesisTx = result.txId
-
-                                this.log(`✓ Token created: ${tokenId}`, 'success')
-                                this.log(`Genesis TX: ${genesisTx}`, 'success')
-                                this.log(`View on blockchain: https://whatsonchain.com/tx/${genesisTx}`, 'info')
-
-                                // Poll for Merkle proof
-                                this.log('⏳ Polling for Merkle proof (may take ~10 minutes)...', 'info')
-                                tokenBuilder.pollForProof(tokenId, result.txId, (msg) => {
-                                    this.log(`Proof status: ${msg}`, 'debug')
-                                }).then((found) => {
-                                    if (found) {
-                                        this.log('✓ Merkle proof confirmed - token is now fully verified', 'success')
-                                        this.updateCallButtonStatus('confirmed')
-                                        this.log('✓✓ Call connected!', 'success')
-                                    }
-                                }).catch(err => {
-                                    this.log(`Error polling for proof: ${err.message}`, 'warning')
-                                })
-
-                                return { tokenId, txId: result.txId, tokenIds: result.tokenIds }
-                            } catch (err) {
-                                this.log(`Token creation failed: ${err.message}`, 'error')
-                                throw err
-                            }
-                        }
 
                         // Use realMintFn to create tokens since none exist
                         this.updateCallButtonStatus('calling')
@@ -1457,15 +1457,15 @@
                             return
                         }
 
-                        // Tokens are available and confirmed - use existing tokens without creating new ones
+                        // Tokens are available - initiate call with realMintFn
                         this.updateCallButtonStatus('calling')
                         this.log(`📞 Initiating call to ${calleeAddress} using existing tokens...`, 'info')
 
                         const session = await this.callManager.initiateCall(calleeAddress, {
                             audio: true,
                             video: true,
-                            quality: quality
-                            // No mintTokenFn - use existing tokens instead
+                            quality: quality,
+                            mintTokenFn: realMintFn
                         })
 
                         this.currentCallToken = session.callTokenId
