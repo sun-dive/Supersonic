@@ -1358,7 +1358,14 @@
                 const myAddress = document.getElementById('myAddress')?.value
 
                 if (!tokenBuilder || !myAddress) {
+                    console.debug(`[RECV] Waiting for wallet to load... (tokenBuilder=${!!tokenBuilder}, myAddress=${!!myAddress})`)
                     return  // Wait until wallet is loaded
+                }
+
+                // Ensure signaling is initialized with wallet address BEFORE polling
+                if (!this.signaling.myAddress) {
+                    console.debug(`[RECV] Initializing signaling with address: ${myAddress.slice(0,10)}...`)
+                    this.signaling.myAddress = myAddress
                 }
 
                 try {
