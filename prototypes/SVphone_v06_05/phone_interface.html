@@ -816,7 +816,7 @@
                     </div>
                 </div>
 
-                <button class="btn-primary" onclick="app.initializeCall()">📞 Initiate Call</button>
+                <button class="btn-primary" id="initiateCallBtn" onclick="app.initializeCall()">📞 Make a Call</button>
                 <button class="btn-primary" onclick="app.toggleMediaStream()" id="mediaBtn">🎤 Start Media</button>
 
                 <div class="call-status" id="callStatus" style="display:none;">
@@ -960,6 +960,7 @@
                 this.callStartTime = null
                 this.durationInterval = null
                 this.isMintPending = false
+                this.callTokenStatus = 'none'  // none | minting | pending | confirmed | ready
 
                 this.init()
             }
@@ -1005,6 +1006,23 @@
                     this.log(`❌ Initialization failed: ${error.message}`, 'error')
                     console.error('[SVphone] Init error:', error)
                 }
+            }
+
+            updateCallButtonStatus(status) {
+                this.callTokenStatus = status
+                const btn = document.getElementById('initiateCallBtn')
+                if (!btn) return
+
+                const statusLabels = {
+                    'none': '📞 Make a Call',
+                    'minting': '⏳ Minting Call Tokens',
+                    'pending': '⌛ Waiting for Confirmation on Chain',
+                    'confirmed': '✓ Ready to Start a Call',
+                    'calling': '📞 Call Ringing'
+                }
+
+                btn.textContent = statusLabels[status] || statusLabels['none']
+                btn.disabled = status === 'minting' || status === 'pending'
             }
 
             syncWalletData() {
@@ -1344,10 +1362,12 @@
                     const hasCallTokens = await this.checkForCallTokens()
                     if (!hasCallTokens) {
                         this.log('📋 No call tokens found. Initiating mint...', 'info')
+                        this.updateCallButtonStatus('minting')
 
                         const quantity = this.promptForMintQuantity()
                         if (quantity === null) {
                             this.log('Mint cancelled by user', 'info')
+                            this.updateCallButtonStatus('none')
                             return
                         }
 
@@ -1357,15 +1377,20 @@
 
                         if (!minted) {
                             this.log('Call initiation cancelled due to mint failure', 'error')
+                            this.updateCallButtonStatus('none')
                             return
                         }
 
                         // IMPORTANT: Tokens are being minted but not confirmed yet
                         // Wait for user confirmation before proceeding to initiate call
+                        this.updateCallButtonStatus('pending')
                         this.log('📋 Call tokens minting - waiting for blockchain confirmation...', 'warning')
-                        this.log('⏳ Once tokens are confirmed, click "Initiate Call" again to make your call', 'info')
+                        this.log('⏳ Once tokens are confirmed, the button will show "Ready to Start a Call"', 'info')
                         return  // CRITICAL: Stop here and wait for confirmation
                     }
+
+                    // Tokens exist - update button and proceed to initiate call
+                    this.updateCallButtonStatus('calling')
                     // ====================================================
 
                     const realMintFn = async (token) => {
@@ -1424,6 +1449,9 @@
                             }).then((found) => {
                                 if (found) {
                                     this.log('✓ Merkle proof confirmed - token is now fully verified', 'success')
+                                    // Update button to show tokens are ready
+                                    this.updateCallButtonStatus('confirmed')
+                                    this.log('✓✓ Call tokens are now ready! Click "Ready to Start a Call" to initiate the call', 'success')
                                 }
                             }).catch(err => {
                                 this.log(`Error polling for proof: ${err.message}`, 'warning')
@@ -1749,6 +1777,8 @@
                 document.getElementById('encryptionValue').textContent = '-'
                 this.currentCallToken = null
                 this.currentRole = null
+                // Reset button to default state
+                this.updateCallButtonStatus('none')
             }
 
             // ============ MICROPHONE TEST METHODS ============
