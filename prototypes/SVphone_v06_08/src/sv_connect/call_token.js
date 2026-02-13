@@ -30,7 +30,7 @@ class CallTokenManager {
     try {
       // Create token on blockchain
       const result = await this.mintCallToken({
-        tokenName: `svphone-call-v1-${callerIdent}`,
+        tokenName: `CALL-${callerIdent}`,
         tokenScript: callToken.tokenScript || '',
         attributes: attributesHex,
         supply: callToken.tokenRules?.supply || 1,

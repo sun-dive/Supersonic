@@ -1265,12 +1265,9 @@
                     console.debug(`[CHECK] Total tokens in store: ${tokens.length}`)
                     console.debug(`[CHECK] Token names: ${tokens.map(t => `"${t.tokenName}"`).join(', ')}`)
 
-                    // Check for call tokens (both old format: svphone-call-v1, and new format: svphone-call-v1-XXXXX)
+                    // Check for call tokens (format: CALL-XXXXX where XXXXX is caller identifier)
                     const callTokens = tokens.filter(t => {
-                        const isMatch = t.tokenName && (
-                            t.tokenName === 'svphone-call-v1' ||
-                            t.tokenName.startsWith('svphone-call-v1-')
-                        )
+                        const isMatch = t.tokenName && t.tokenName.startsWith('CALL-')
                         if (isMatch) {
                             console.debug(`[CHECK] ✓ Found call token: "${t.tokenName}"`)
                         } else {
@@ -1502,8 +1499,8 @@
                             const filtered = tokens.filter((t, idx) => {
                                 console.debug(`[RECV]   [${idx+1}/${tokens.length}] Token: name="${t.tokenName}", id=${t.tokenId?.slice(0,10)}...`)
 
-                                // Check if token name is a call token (format: svphone-call-v1-XXXXX where XXXXX is caller ident)
-                                if (!t.tokenName || !t.tokenName.startsWith('svphone-call-v1-')) {
+                                // Check if token name is a call token (format: CALL-XXXXX where XXXXX is caller ident)
+                                if (!t.tokenName || !t.tokenName.startsWith('CALL-')) {
                                     console.debug(`[RECV]       ❌ Not a call token (is "${t.tokenName}")`)
                                     return false
                                 }
