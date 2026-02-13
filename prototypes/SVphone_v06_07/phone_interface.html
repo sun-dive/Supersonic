@@ -1386,6 +1386,8 @@
                             port: session.calleePort,
                             sessionKey: session.calleeSessionKey
                         }
+                        // Initiate direct P2P connection to callee using their connection data
+                        this.initiateP2PConnection(session.callTokenId, session.calleeAddress, session.calleeIp, session.calleePort)
                     }
                 })
 
@@ -2026,6 +2028,13 @@
                         }
                     }
 
+                    // Extract caller's connection data from token attributes for P2P
+                    const callerAttrs = JSON.parse(receivedToken.tokenAttributes || '{}')
+                    if (callerAttrs.caller && callerAttrs.senderIp && callerAttrs.senderPort) {
+                        console.debug(`[P2P] 🔗 Initiating P2P connection back to caller: ${callerAttrs.caller}`)
+                        this.initiateP2PConnection(this.currentCallToken, callerAttrs.caller, callerAttrs.senderIp, callerAttrs.senderPort)
+                    }
+
                     document.getElementById('incomingCall').style.display = 'none'
                     document.getElementById('acceptBtn').style.display = 'none'
                     document.getElementById('rejectBtn').style.display = 'none'
@@ -2095,6 +2104,19 @@
                                 }
                             }
 
+                            // Extract caller's connection data from token attributes for P2P
+                            const tokenStore = window.tokenStore
+                            if (tokenStore) {
+                                const receivedTokenForP2P = await tokenStore.getToken(this.currentCallToken)
+                                if (receivedTokenForP2P) {
+                                    const callerAttrs = JSON.parse(receivedTokenForP2P.tokenAttributes || '{}')
+                                    if (callerAttrs.caller && callerAttrs.senderIp && callerAttrs.senderPort) {
+                                        console.debug(`[P2P] 🔗 Initiating P2P connection back to caller (audio-only): ${callerAttrs.caller}`)
+                                        this.initiateP2PConnection(this.currentCallToken, callerAttrs.caller, callerAttrs.senderIp, callerAttrs.senderPort)
+                                    }
+                                }
+                            }
+
                             document.getElementById('incomingCall').style.display = 'none'
                             document.getElementById('acceptBtn').style.display = 'none'
                             document.getElementById('rejectBtn').style.display = 'none'
@@ -2137,6 +2159,51 @@
                     this.log('Call ended', 'info')
                 } catch (error) {
                     this.log(`Error ending call: ${error.message}`, 'error')
+                }
+            }
+
+            async initiateP2PConnection(callTokenId, remoteAddress, remoteIp, remotePort) {
+                try {
+                    console.debug(`[P2P] 🔗 Initiating direct P2P connection to ${remoteAddress}`)
+                    console.debug(`[P2P] Remote endpoint: ${remoteIp}:${remotePort}`)
+
+                    this.log(`🔗 Establishing P2P connection to ${remoteAddress}...`, 'info')
+
+                    // Create peer connection for direct P2P
+                    const peerConnection = this.peerConnection.createPeerConnection(remoteAddress)
+
+                    console.debug(`[P2P] ✓ Peer connection created for ${remoteAddress}`)
+
+                    // Monitor connection state
+                    const checkConnectionState = setInterval(() => {
+                        const state = this.peerConnection.getConnectionState(remoteAddress)
+                        console.debug(`[P2P] Connection state: ${state}`)
+
+                        if (state === 'connected') {
+                            clearInterval(checkConnectionState)
+                            this.log(`✓ P2P connection established to ${remoteAddress}`, 'success')
+                            this.updateCallStatus('p2p-connected', 'P2P Connected')
+                            this.emit('p2p:connected', { remoteAddress, remoteIp, remotePort })
+                        } else if (state === 'failed') {
+                            clearInterval(checkConnectionState)
+                            this.log(`✗ P2P connection failed to ${remoteAddress}`, 'error')
+                            this.emit('p2p:failed', { remoteAddress })
+                        }
+                    }, 500)
+
+                    // Timeout after 30 seconds
+                    setTimeout(() => {
+                        clearInterval(checkConnectionState)
+                        const state = this.peerConnection.getConnectionState(remoteAddress)
+                        if (state !== 'connected') {
+                            console.warn(`[P2P] ⚠️  Connection timeout after 30s (state: ${state})`)
+                        }
+                    }, 30000)
+
+                    console.debug(`[P2P] ✅ P2P connection initiated to ${remoteIp}:${remotePort}`)
+                } catch (error) {
+                    console.error(`[P2P] ❌ P2P connection error:`, error)
+                    this.log(`P2P connection error: ${error.message}`, 'error')
                 }
             }
 
