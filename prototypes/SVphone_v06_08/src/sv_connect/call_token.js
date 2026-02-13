@@ -5,6 +5,9 @@
  * Separates call token logic from the main phone interface
  */
 
+// Fee rate for all blockchain operations (sats/KB)
+const CALL_TOKEN_FEE_RATE = 100
+
 class CallTokenManager {
   constructor(tokenBuilder, uiLogger) {
     this.tokenBuilder = tokenBuilder
@@ -115,6 +118,9 @@ class CallTokenManager {
   async mintCallToken(tokenData) {
     console.debug(`[CallToken] Minting token: ${tokenData.tokenName}`)
 
+    // Set fee rate for minting
+    this.tokenBuilder.feePerKb = CALL_TOKEN_FEE_RATE
+
     const result = await this.tokenBuilder.createGenesis({
       tokenName: tokenData.tokenName,
       tokenScript: tokenData.tokenScript,
@@ -138,6 +144,9 @@ class CallTokenManager {
     this.log(`📤 Transferring token to recipient...`, 'info')
 
     try {
+      // Set fee rate for transfer
+      this.tokenBuilder.feePerKb = CALL_TOKEN_FEE_RATE
+
       const transferResult = await this.tokenBuilder.createTransfer(tokenId, recipientAddress)
       console.debug(`[CallToken] ✅ Token transferred successfully!`)
       console.debug(`[CallToken] Transfer TX: ${transferResult.txId}`)
