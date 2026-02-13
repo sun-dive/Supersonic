@@ -1707,6 +1707,21 @@
                             this.log(`Genesis TX: ${genesisTx}`, 'success')
                             this.log(`View on blockchain: https://whatsonchain.com/tx/${genesisTx}`, 'info')
 
+                            // Transfer token to recipient so they can find it via polling
+                            console.debug(`[SEND] 📤 Transferring token to recipient: ${token.callee}`)
+                            this.log(`📤 Transferring token to recipient...`, 'info')
+                            try {
+                                const transferResult = await tokenBuilder.createTransfer(tokenId, token.callee)
+                                console.debug(`[SEND] ✅ Token transferred successfully!`)
+                                console.debug(`[SEND]   Transfer TX: ${transferResult.txId}`)
+                                this.log(`✓ Token transferred to recipient: ${transferResult.txId}`, 'success')
+                                this.log(`View transfer on blockchain: https://whatsonchain.com/tx/${transferResult.txId}`, 'info')
+                            } catch (err) {
+                                console.error(`[SEND] ❌ Token transfer failed:`, err)
+                                this.log(`⚠️ Token transfer failed: ${err.message}`, 'warning')
+                                // Continue anyway - token was created, transfer can be retried
+                            }
+
                             // Poll for Merkle proof
                             this.log('⏳ Polling for Merkle proof (may take ~10 minutes)...', 'info')
                             tokenBuilder.pollForProof(tokenId, result.txId, (msg) => {
