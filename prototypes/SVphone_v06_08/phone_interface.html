@@ -942,6 +942,7 @@
     <script src="src/sv_connect/codec_negotiation.js"></script>
     <script src="src/sv_connect/quality_adaptation.js"></script>
     <script src="src/sv_connect/media_security.js"></script>
+    <script src="src/sv_connect/call_token.js"></script>
 
     <script>
         /**
@@ -967,6 +968,9 @@
                 this.durationInterval = null
                 this.isMintPending = false
                 this.callTokenStatus = 'none'  // none | minting | pending | confirmed | ready
+
+                // Initialize call token manager (will be set up in init())
+                this.callTokenManager = null
 
                 this.init()
             }
@@ -1010,6 +1014,12 @@
                 this.security = new MediaSecurity()
                 this.micTester = new MicrophoneTester((msg, type) => this.log(msg, type))
                 this.cameraTester = new CameraTester((msg, type) => this.log(msg, type))
+
+                // Initialize call token manager
+                if (window.tokenBuilder && window.CallTokenManager) {
+                    this.callTokenManager = new CallTokenManager(window.tokenBuilder, (msg, type) => this.log(msg, type))
+                    console.debug('[INIT] CallTokenManager initialized')
+                }
 
                     // Bind event listeners
                     this.bindEvents()
@@ -1616,102 +1626,15 @@
                         return
                     }
 
-                    // Define realMintFn to create call tokens (always available)
-                    const realMintFn = async (token) => {
-                        console.debug(`[SEND] 📤 Creating call token...`)
-                        console.debug(`[SEND]   Caller: ${token.caller}`)
-                        console.debug(`[SEND]   Callee: ${token.callee}`)
-                        console.debug(`[SEND]   Sender IP: ${token.senderIp}:${token.senderPort}`)
-
-                        this.log(`Creating call token for ${token.callee}`, 'info')
-                        try {
-                            // Encode call attributes as JSON for attributes field
-                            const attributesJson = JSON.stringify({
-                                caller: token.caller,
-                                callee: token.callee,
-                                senderIp: token.senderIp,
-                                senderPort: token.senderPort,
-                                sessionKey: token.sessionKey,
-                                codec: token.codec,
-                                quality: token.quality,
-                                mediaTypes: token.mediaTypes
-                            })
-                            console.debug(`[SEND]   Attributes JSON: ${attributesJson.slice(0,100)}...`)
-                            const attributesHex = Array.from(new TextEncoder().encode(attributesJson))
-                                .map(b => b.toString(16).padStart(2, '0'))
-                                .join('')
-                            console.debug(`[SEND]   Attributes Hex: ${attributesHex.slice(0,50)}... (${attributesHex.length} chars)`)
-
-                            // Encode call state as JSON for state field
-                            const stateJson = JSON.stringify({
-                                status: token.status,
-                                initiatedAt: token.initiatedAt,
-                                timestamp: token.timestamp
-                            })
-                            const stateHex = Array.from(new TextEncoder().encode(stateJson))
-                                .map(b => b.toString(16).padStart(2, '0'))
-                                .join('')
-
-                            // Create new token
-                            // Include first 5 chars of caller address in token name for tracking
-                            const callerIdent = token.caller ? token.caller.slice(0, 5) : 'unkn'
-                            const result = await tokenBuilder.createGenesis({
-                                tokenName: `svphone-call-v1-${callerIdent}`,
-                                tokenScript: token.tokenScript || '',
-                                attributes: attributesHex || '00',
-                                supply: token.tokenRules?.supply || 1,
-                                divisibility: token.tokenRules?.divisibility || 0,
-                                restrictions: token.tokenRules?.restrictions || 0,
-                                rulesVersion: token.tokenRules?.version || 1,
-                                stateData: stateHex
-                            })
-
-                            const tokenId = result.tokenIds?.[0] || result.tokenId
-                            const genesisTx = result.txId
-
-                            console.debug(`[SEND] ✅ Token created successfully!`)
-                            console.debug(`[SEND]   Token ID: ${tokenId}`)
-                            console.debug(`[SEND]   Genesis TX: ${genesisTx}`)
-                            console.debug(`[SEND]   Status: Broadcast to mempool (waiting for confirmation)`)
-
-                            this.log(`✓ Token created: ${tokenId}`, 'success')
-                            this.log(`Genesis TX: ${genesisTx}`, 'success')
-                            this.log(`View on blockchain: https://whatsonchain.com/tx/${genesisTx}`, 'info')
-
-                            // Transfer token to recipient so they can find it via polling
-                            console.debug(`[SEND] 📤 Transferring token to recipient: ${token.callee}`)
-                            this.log(`📤 Transferring token to recipient...`, 'info')
-                            try {
-                                const transferResult = await tokenBuilder.createTransfer(tokenId, token.callee)
-                                console.debug(`[SEND] ✅ Token transferred successfully!`)
-                                console.debug(`[SEND]   Transfer TX: ${transferResult.txId}`)
-                                this.log(`✓ Token transferred to recipient: ${transferResult.txId}`, 'success')
-                                this.log(`View transfer on blockchain: https://whatsonchain.com/tx/${transferResult.txId}`, 'info')
-                            } catch (err) {
-                                console.error(`[SEND] ❌ Token transfer failed:`, err)
-                                this.log(`⚠️ Token transfer failed: ${err.message}`, 'warning')
-                                // Continue anyway - token was created, transfer can be retried
-                            }
-
-                            // Poll for Merkle proof
-                            this.log('⏳ Polling for Merkle proof (may take ~10 minutes)...', 'info')
-                            tokenBuilder.pollForProof(tokenId, result.txId, (msg) => {
-                                this.log(`Proof status: ${msg}`, 'debug')
-                            }).then((found) => {
-                                if (found) {
-                                    this.log('✓ Merkle proof confirmed - token is now fully verified', 'success')
-                                    this.updateCallButtonStatus('confirmed')
-                                    this.log('✓✓ Call connected!', 'success')
-                                }
-                            }).catch(err => {
-                                this.log(`Error polling for proof: ${err.message}`, 'warning')
-                            })
-
-                            return { tokenId, txId: result.txId, tokenIds: result.tokenIds }
-                        } catch (err) {
-                            this.log(`Token creation failed: ${err.message}`, 'error')
-                            throw err
+                    // Use CallTokenManager to create and broadcast tokens
+                    const callTokenCreateFn = async (token) => {
+                        if (!this.callTokenManager) {
+                            throw new Error('CallTokenManager not initialized')
                         }
+                        const result = await this.callTokenManager.createAndBroadcastCallToken(token)
+                        this.updateCallButtonStatus('confirmed')
+                        this.log('✓✓ Call connected!', 'success')
+                        return result
                     }
 
                     const hasCallTokens = await this.checkForCallTokens()
@@ -1722,13 +1645,13 @@
                         this.log('📋 No call tokens found. Minting new tokens...', 'info')
                         this.updateCallButtonStatus('minting')
 
-                        // Use realMintFn to create tokens since none exist
+                        // Use callTokenCreateFn to create tokens since none exist
                         this.updateCallButtonStatus('calling')
                         const session = await this.callManager.initiateCall(calleeAddress, {
                             audio: true,
                             video: true,
                             quality: quality,
-                            mintTokenFn: realMintFn
+                            mintTokenFn: callTokenCreateFn
                         })
 
                         this.currentCallToken = session.callTokenId
@@ -1751,8 +1674,8 @@
                         const session = await this.callManager.initiateCall(calleeAddress, {
                             audio: true,
                             video: true,
-                            quality: quality
-                            // No mintTokenFn - will use existing tokens instead
+                            quality: quality,
+                            mintTokenFn: callTokenCreateFn
                         })
 
                         this.currentCallToken = session.callTokenId
