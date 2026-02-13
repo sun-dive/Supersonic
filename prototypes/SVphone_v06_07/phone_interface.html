@@ -1993,10 +1993,9 @@
                             if (callerAddress) {
                                 this.log(`📤 Sending token back to caller ${callerAddress}...`, 'info')
                                 // Transfer the token back to caller with updated attributes
-                                const transferResult = await tokenBuilder.transfer(
+                                const transferResult = await tokenBuilder.createTransfer(
                                     this.currentCallToken,
-                                    callerAddress,
-                                    ''  // No message needed
+                                    callerAddress
                                 )
                                 this.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
                             }
@@ -2042,10 +2041,9 @@
                                         const callerAddress = receivedToken.caller || JSON.parse(receivedToken.tokenAttributes || '{}').caller
                                         if (callerAddress) {
                                             try {
-                                                const transferResult = await tokenBuilder.transfer(
+                                                const transferResult = await tokenBuilder.createTransfer(
                                                     this.currentCallToken,
-                                                    callerAddress,
-                                                    ''
+                                                    callerAddress
                                                 )
                                                 this.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
                                             } catch (transferError) {
