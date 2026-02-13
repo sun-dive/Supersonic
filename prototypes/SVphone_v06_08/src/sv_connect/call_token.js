@@ -30,6 +30,11 @@ class CallTokenManager {
 
     this.log(`Creating call token for ${callToken.callee}`, 'info')
 
+    console.debug(`[CallToken] Token encoding:`)
+    console.debug(`[CallToken]   - attributes length: ${attributesHex.length} chars`)
+    console.debug(`[CallToken]   - stateData length: ${stateHex.length} chars`)
+    console.debug(`[CallToken]   - tokenName: CALL-${callerIdent}`)
+
     try {
       // Create token on blockchain
       const result = await this.mintCallToken({
@@ -105,11 +110,15 @@ class CallTokenManager {
       timestamp: token.timestamp
     })
 
+    console.debug(`[CallToken] State JSON: ${stateJson}`)
+
     const stateHex = Array.from(new TextEncoder().encode(stateJson))
       .map(b => b.toString(16).padStart(2, '0'))
       .join('')
 
-    return stateHex
+    console.debug(`[CallToken] State Hex: ${stateHex.slice(0, 50)}... (${stateHex.length} chars)`)
+
+    return stateHex || '00'
   }
 
   /**
