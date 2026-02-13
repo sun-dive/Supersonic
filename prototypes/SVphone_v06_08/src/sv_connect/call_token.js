@@ -5,9 +5,6 @@
  * Separates call token logic from the main phone interface
  */
 
-// Fee rate for all blockchain operations (sats/KB)
-const CALL_TOKEN_FEE_RATE = 100
-
 // CALL token rules (immutable, defined once here)
 const CALL_TOKEN_RULES = {
   supply: 1,              // Single NFT per call
@@ -44,8 +41,8 @@ class CallTokenManager {
     console.debug(`[CallToken]   - tokenName: CALL-${callerIdent}`)
 
     try {
-      // Create token on blockchain
-      const result = await this.mintCallToken({
+      // Create token on blockchain (use tokenBuilder.createGenesis directly)
+      const result = await this.tokenBuilder.createGenesis({
         tokenName: `CALL-${callerIdent}`,
         tokenScript: callToken.tokenScript || '',
         attributes: attributesHex,
@@ -130,29 +127,6 @@ class CallTokenManager {
   }
 
   /**
-   * Mint call token on blockchain
-   */
-  async mintCallToken(tokenData) {
-    console.debug(`[CallToken] Minting token: ${tokenData.tokenName}`)
-
-    // Set fee rate for minting
-    this.tokenBuilder.feePerKb = CALL_TOKEN_FEE_RATE
-
-    const result = await this.tokenBuilder.createGenesis({
-      tokenName: tokenData.tokenName,
-      tokenScript: tokenData.tokenScript,
-      attributes: tokenData.attributes,
-      supply: tokenData.supply,
-      divisibility: tokenData.divisibility,
-      restrictions: tokenData.restrictions,
-      rulesVersion: tokenData.rulesVersion,
-      stateData: tokenData.stateData
-    })
-
-    return result
-  }
-
-  /**
    * Transfer call token to recipient
    * Allows recipient to find token via polling
    */
@@ -161,9 +135,6 @@ class CallTokenManager {
     this.log(`📤 Transferring token to recipient...`, 'info')
 
     try {
-      // Set fee rate for transfer
-      this.tokenBuilder.feePerKb = CALL_TOKEN_FEE_RATE
-
       const transferResult = await this.tokenBuilder.createTransfer(tokenId, recipientAddress)
       console.debug(`[CallToken] ✅ Token transferred successfully!`)
       console.debug(`[CallToken] Transfer TX: ${transferResult.txId}`)

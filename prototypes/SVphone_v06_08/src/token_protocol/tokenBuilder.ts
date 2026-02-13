@@ -92,7 +92,7 @@ export interface FungibleTransferResult {
 // ─── Constants ──────────────────────────────────────────────────────
 
 const TOKEN_SATS = 1
-const DEFAULT_FEE_PER_KB = 150
+const DEFAULT_FEE_PER_KB = 100
 const BYTES_PER_INPUT = 148
 const BYTES_PER_P2PKH_OUTPUT = 34
 const TX_OVERHEAD = 10
