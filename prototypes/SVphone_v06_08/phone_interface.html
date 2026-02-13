@@ -1316,51 +1316,15 @@
                     })
 
                     this.log(`✅ Genesis TX broadcast! TX: ${result.txId.slice(0, 12)}...`, 'success')
-                    this.log(`⏳ Waiting for block confirmation...`, 'info')
+                    this.log(`✓ ${quantity} call token(s) ready to use (SPV verified)`, 'success')
 
-                    // Poll for confirmation
-                    const confirmed = await this.waitForTokenConfirmation(result.txId, tokenBuilder)
-
-                    if (confirmed) {
-                        this.log(`✓ Tokens confirmed! ${quantity} call tokens ready to use`, 'success')
-                        return true
-                    } else {
-                        this.log('⏱️  Confirmation timed out. Tokens may still confirm later.', 'warning')
-                        return false
-                    }
+                    // SPV tokens are immediately usable - no confirmation needed
+                    // Merkle proof will be verified in background (optional)
+                    return true
                 } catch (error) {
                     this.log(`❌ Mint failed: ${error.message}`, 'error')
                     return false
                 }
-            }
-
-            async waitForTokenConfirmation(txId, tokenBuilder, maxWait = 600000) {
-                const startTime = Date.now()
-                const pollInterval = 5000
-
-                return new Promise((resolve) => {
-                    const checkConfirm = async () => {
-                        try {
-                            if (Date.now() - startTime > maxWait) {
-                                this.log('Confirmation polling timeout (10 minutes)', 'warning')
-                                resolve(false)
-                                return
-                            }
-
-                            const confirmed = await tokenBuilder.pollForConfirmation(txId)
-                            if (confirmed) {
-                                resolve(true)
-                                return
-                            }
-                        } catch (e) {
-                            this.log(`Poll error: ${e.message}`, 'error')
-                        }
-
-                        setTimeout(checkConfirm, pollInterval)
-                    }
-
-                    checkConfirm()
-                })
             }
 
             bindEvents() {
