@@ -212,8 +212,10 @@ class CallSignaling {
         console.debug(`[CallSignaling] Poll found ${incomingTokens.length} tokens`)
 
         for (const token of incomingTokens) {
-          // Check if it's a call initiation token
-          if (token.tokenName !== 'svphone-call-v1') {
+          // Check if it's a call initiation token (supports both old and new format)
+          // Old format: svphone-call-v1
+          // New format: svphone-call-v1-XXXXX (where XXXXX is caller identifier)
+          if (!token.tokenName || (!token.tokenName.startsWith('svphone-call-v1'))) {
             console.debug(`[CallSignaling] Skip token: not a call token (name=${token.tokenName})`)
             continue
           }
