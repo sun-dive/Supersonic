@@ -1962,20 +1962,21 @@
                         return
                     }
 
-                    // Update token attributes with recipient's connection data
+                    // Prepare recipient's response data to send back to caller
                     // Generate a random session key (32 bytes, base64 encoded)
                     const keyBytes = new Uint8Array(32)
                     crypto.getRandomValues(keyBytes)
                     const recipientSessionKey = btoa(String.fromCharCode(...keyBytes))
-                    const updatedAttributes = {
-                        ...JSON.parse(receivedToken.tokenAttributes || '{}'),
+                    const responseData = {
+                        status: 'answered',
                         recipientAddress: recipientAddress,
                         recipientIp: recipientIp,
                         recipientPort: recipientPort,
-                        recipientSessionKey: recipientSessionKey
+                        recipientSessionKey: recipientSessionKey,
+                        answeredAt: Date.now()
                     }
-                    const updatedAttributesJson = JSON.stringify(updatedAttributes)
-                    const updatedAttributesHex = Array.from(new TextEncoder().encode(updatedAttributesJson))
+                    const responseJson = JSON.stringify(responseData)
+                    const responseStateHex = Array.from(new TextEncoder().encode(responseJson))
                         .map(b => b.toString(16).padStart(2, '0'))
                         .join('')
 
@@ -1985,19 +1986,22 @@
                         video: true
                     })
 
-                    // Send the token back to the caller
+                    // Send the token back to the caller with response data in stateData
                     const tokenBuilder = window.tokenBuilder
                     if (tokenBuilder) {
                         try {
                             const callerAddress = receivedToken.caller || JSON.parse(receivedToken.tokenAttributes || '{}').caller
                             if (callerAddress) {
                                 this.log(`📤 Sending token back to caller ${callerAddress}...`, 'info')
-                                // Transfer the token back to caller with updated attributes
+                                console.debug(`[SEND] Response data:`, responseData)
+                                // Transfer the token back to caller with response data in stateData
                                 const transferResult = await tokenBuilder.createTransfer(
                                     this.currentCallToken,
-                                    callerAddress
+                                    callerAddress,
+                                    responseStateHex  // Pass recipient's connection data as stateData
                                 )
                                 this.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
+                                console.debug(`[SEND] ✅ Response token transferred: ${transferResult.txId}`)
                             }
                         } catch (transferError) {
                             this.log(`⚠️  Could not send token back: ${transferError.message}`, 'warning')
@@ -2027,6 +2031,24 @@
                             const recipientPort = parseInt(document.getElementById('myPort').value)
 
                             if (recipientAddress && recipientIp && recipientPort) {
+                                // Prepare recipient's response data for audio-only call
+                                const keyBytes = new Uint8Array(32)
+                                crypto.getRandomValues(keyBytes)
+                                const recipientSessionKey = btoa(String.fromCharCode(...keyBytes))
+                                const responseData = {
+                                    status: 'answered',
+                                    recipientAddress: recipientAddress,
+                                    recipientIp: recipientIp,
+                                    recipientPort: recipientPort,
+                                    recipientSessionKey: recipientSessionKey,
+                                    answeredAt: Date.now(),
+                                    audioOnly: true
+                                }
+                                const responseJson = JSON.stringify(responseData)
+                                const responseStateHex = Array.from(new TextEncoder().encode(responseJson))
+                                    .map(b => b.toString(16).padStart(2, '0'))
+                                    .join('')
+
                                 await this.callManager.acceptCall(this.currentCallToken, {
                                     audio: true,
                                     video: false
@@ -2043,9 +2065,11 @@
                                             try {
                                                 const transferResult = await tokenBuilder.createTransfer(
                                                     this.currentCallToken,
-                                                    callerAddress
+                                                    callerAddress,
+                                                    responseStateHex  // Pass response data as stateData
                                                 )
                                                 this.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
+                                                console.debug(`[SEND] ✅ Audio-only response token transferred: ${transferResult.txId}`)
                                             } catch (transferError) {
                                                 this.log(`⚠️  Could not send token back: ${transferError.message}`, 'warning')
                                             }
