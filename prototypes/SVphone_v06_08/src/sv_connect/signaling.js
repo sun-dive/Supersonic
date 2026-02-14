@@ -47,28 +47,234 @@ class CallSignaling {
   }
 
   /**
-   * Parse tokenAttributes from hex-encoded JSON string
+   * Encode call attributes into byte-efficient binary format
+   *
+   * Format (optimized for blockchain storage):
+   * [Version(1)] [CallerLen(1)] [Caller(var)] [CalleeLen(1)] [Callee(var)]
+   * [IPType(1-bit)+IP(4|16)] [Port(2)] [KeyLen(1)] [Key(var)]
+   * [Codec(1)] [Quality(1)] [MediaTypes(1)]
+   *
+   * Typical size: ~100-150 bytes (vs 500+ bytes for JSON)
+   *
+   * @param {Object} attributes - Call attributes {caller, callee, senderIp, senderPort, sessionKey, codec, quality, mediaTypes}
+   * @returns {string} Hex-encoded binary data
+   */
+  encodeTokenAttributes(attributes) {
+    try {
+      const bytes = []
+
+      // Version marker (0x01 = binary format v1)
+      bytes.push(0x01)
+
+      // Caller address (variable-length string)
+      const callerBuf = new TextEncoder().encode(attributes.caller)
+      bytes.push(callerBuf.length)
+      bytes.push(...callerBuf)
+
+      // Callee address (variable-length string)
+      const calleeBuf = new TextEncoder().encode(attributes.callee)
+      bytes.push(calleeBuf.length)
+      bytes.push(...calleeBuf)
+
+      // IP address and port
+      const ip = attributes.senderIp
+      const port = attributes.senderPort
+
+      // Detect IP version (0=IPv4, 1=IPv6)
+      const isIPv6 = ip.includes(':')
+      const ipBits = isIPv6 ? 1 : 0
+
+      if (!isIPv6) {
+        // IPv4: 4 bytes (with version bit in MSB)
+        const parts = ip.split('.').map(p => parseInt(p, 10))
+        bytes.push((ipBits << 7) | (parts[0] & 0x7F))
+        bytes.push(parts[1])
+        bytes.push(parts[2])
+        bytes.push(parts[3])
+      } else {
+        // IPv6: 16 bytes (with version bit in MSB of first byte)
+        const ipv6Buf = this.ipv6ToBytes(ip)
+        bytes.push((ipBits << 7) | (ipv6Buf[0] & 0x7F))
+        bytes.push(...ipv6Buf.slice(1))
+      }
+
+      // Port (2 bytes, big-endian)
+      bytes.push((port >> 8) & 0xFF)
+      bytes.push(port & 0xFF)
+
+      // Session key (variable-length binary)
+      const keyData = attributes.sessionKey
+      const keyBuf = typeof keyData === 'string'
+        ? new TextEncoder().encode(keyData)
+        : keyData
+      bytes.push(keyBuf.length)
+      bytes.push(...keyBuf)
+
+      // Codec (1 byte enum: 0=opus, 1=pcm, 2=aac)
+      const codecMap = { 'opus': 0, 'pcm': 1, 'aac': 2 }
+      bytes.push(codecMap[attributes.codec] || 0)
+
+      // Quality (1 byte enum: 0=sd, 1=hd, 2=vhd)
+      const qualityMap = { 'sd': 0, 'hd': 1, 'vhd': 2 }
+      bytes.push(qualityMap[attributes.quality] || 1)
+
+      // Media types (1 byte bitmask: bit0=audio, bit1=video)
+      let mediaBitmask = 0
+      if (attributes.mediaTypes?.includes('audio')) mediaBitmask |= 0x01
+      if (attributes.mediaTypes?.includes('video')) mediaBitmask |= 0x02
+      bytes.push(mediaBitmask)
+
+      // Convert bytes to hex string
+      return bytes.map(b => ('0' + b.toString(16)).slice(-2)).join('')
+    } catch (error) {
+      console.error('[CallSignaling] Failed to encode tokenAttributes:', error)
+      return ''
+    }
+  }
+
+  /**
+   * Parse tokenAttributes from binary or legacy JSON format
+   * Automatically detects format version and decodes accordingly
    * @private
    */
   parseTokenAttributes(tokenAttributesHex) {
     if (!tokenAttributesHex) return {}
 
     try {
-      // Convert hex string to bytes, then to UTF-8 string
+      // Convert hex to bytes
+      const bytes = []
+      for (let i = 0; i < tokenAttributesHex.length; i += 2) {
+        bytes.push(parseInt(tokenAttributesHex.substr(i, 2), 16))
+      }
+
+      if (bytes.length === 0) return {}
+
+      // Check version marker
+      const version = bytes[0]
+
+      if (version === 0x01) {
+        // Binary format v1
+        return this.decodeBinaryAttributes(bytes)
+      } else {
+        // Legacy JSON format (backward compatibility)
+        return this.decodeLegacyJsonAttributes(tokenAttributesHex)
+      }
+    } catch (error) {
+      console.error('[CallSignaling] Failed to parse tokenAttributes:', error)
+      return {}
+    }
+  }
+
+  /**
+   * Decode binary format v1 attributes
+   * @private
+   */
+  decodeBinaryAttributes(bytes) {
+    let offset = 1 // Skip version byte
+
+    // Caller address
+    const callerLen = bytes[offset++]
+    const callerBuf = bytes.slice(offset, offset + callerLen)
+    const caller = new TextDecoder().decode(new Uint8Array(callerBuf))
+    offset += callerLen
+
+    // Callee address
+    const calleeLen = bytes[offset++]
+    const calleeBuf = bytes.slice(offset, offset + calleeLen)
+    const callee = new TextDecoder().decode(new Uint8Array(calleeBuf))
+    offset += calleeLen
+
+    // IP address (4 or 16 bytes based on version bit)
+    const ipTypeByte = bytes[offset++]
+    const isIPv6 = (ipTypeByte >> 7) & 1
+    const ipBytes = [ipTypeByte & 0x7F, ...bytes.slice(offset, offset + (isIPv6 ? 15 : 3))]
+    const senderIp = isIPv6
+      ? this.bytesToIPv6(ipBytes)
+      : `${ipBytes[0]}.${bytes[offset+1]}.${bytes[offset+2]}.${bytes[offset+3]}`
+    offset += isIPv6 ? 15 : 3
+
+    // Port (2 bytes)
+    const senderPort = (bytes[offset] << 8) | bytes[offset + 1]
+    offset += 2
+
+    // Session key
+    const keyLen = bytes[offset++]
+    const keyBuf = bytes.slice(offset, offset + keyLen)
+    const sessionKey = new TextDecoder().decode(new Uint8Array(keyBuf))
+    offset += keyLen
+
+    // Codec
+    const codecIds = ['opus', 'pcm', 'aac']
+    const codec = codecIds[bytes[offset++]] || 'opus'
+
+    // Quality
+    const qualityIds = ['sd', 'hd', 'vhd']
+    const quality = qualityIds[bytes[offset++]] || 'hd'
+
+    // Media types
+    const mediaTypeBitmask = bytes[offset++]
+    const mediaTypes = []
+    if (mediaTypeBitmask & 0x01) mediaTypes.push('audio')
+    if (mediaTypeBitmask & 0x02) mediaTypes.push('video')
+
+    return {
+      caller,
+      callee,
+      senderIp,
+      senderPort,
+      sessionKey,
+      codec,
+      quality,
+      mediaTypes
+    }
+  }
+
+  /**
+   * Decode legacy JSON format (backward compatibility)
+   * @private
+   */
+  decodeLegacyJsonAttributes(tokenAttributesHex) {
+    try {
       let attributesJson = ''
       for (let i = 0; i < tokenAttributesHex.length; i += 2) {
         const hex = tokenAttributesHex.substr(i, 2)
         attributesJson += String.fromCharCode(parseInt(hex, 16))
       }
-
-      // Parse JSON
       return JSON.parse(attributesJson)
     } catch (error) {
-      console.error('[CallSignaling] Failed to parse tokenAttributes:', error, {
-        tokenAttributesHex: tokenAttributesHex?.slice(0, 50)
-      })
+      console.error('[CallSignaling] Failed to decode legacy JSON:', error)
       return {}
     }
+  }
+
+  /**
+   * Helper: Convert IPv6 string to 16-byte array
+   * @private
+   */
+  ipv6ToBytes(ip) {
+    const parts = ip.split(':').filter(p => p.length > 0)
+    const bytes = new Uint8Array(16)
+    let byteIndex = 0
+
+    for (let i = 0; i < parts.length && byteIndex < 16; i++) {
+      const val = parseInt(parts[i], 16) || 0
+      bytes[byteIndex++] = (val >> 8) & 0xFF
+      bytes[byteIndex++] = val & 0xFF
+    }
+
+    return Array.from(bytes)
+  }
+
+  /**
+   * Helper: Convert 16-byte array to IPv6 string
+   * @private
+   */
+  bytesToIPv6(bytes) {
+    const parts = []
+    for (let i = 0; i < 16; i += 2) {
+      parts.push(((bytes[i] << 8) | bytes[i + 1]).toString(16))
+    }
+    return parts.join(':')
   }
 
   /**

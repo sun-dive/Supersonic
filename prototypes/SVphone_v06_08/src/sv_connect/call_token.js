@@ -28,6 +28,109 @@ class CallTokenManager {
   }
 
   /**
+   * Encode call attributes into byte-efficient binary format for blockchain storage
+   *
+   * Format: [Version(1)] [CallerLen(1)] [Caller(var)] [CalleeLen(1)] [Callee(var)]
+   *         [IPType+IP(4-16)] [Port(2)] [KeyLen(1)] [Key(var)]
+   *         [Codec(1)] [Quality(1)] [MediaTypes(1)]
+   *
+   * Size: ~100-150 bytes (vs 500+ for JSON)
+   *
+   * @param {Object} callToken - Call token with connection info
+   * @returns {string} Hex-encoded binary data
+   */
+  encodeCallAttributes(callToken) {
+    try {
+      const bytes = []
+
+      // Version marker (0x01 = binary format v1)
+      bytes.push(0x01)
+
+      // Caller address (variable-length)
+      const callerBuf = new TextEncoder().encode(callToken.caller)
+      bytes.push(callerBuf.length)
+      bytes.push(...callerBuf)
+
+      // Callee address (variable-length)
+      const calleeBuf = new TextEncoder().encode(callToken.callee)
+      bytes.push(calleeBuf.length)
+      bytes.push(...calleeBuf)
+
+      // IP address and port
+      const ip = callToken.senderIp
+      const port = callToken.senderPort
+
+      // Detect IP version (0=IPv4, 1=IPv6)
+      const isIPv6 = ip.includes(':')
+      const ipBits = isIPv6 ? 1 : 0
+
+      if (!isIPv6) {
+        // IPv4: 4 bytes
+        const parts = ip.split('.').map(p => parseInt(p, 10))
+        bytes.push((ipBits << 7) | (parts[0] & 0x7F))
+        bytes.push(parts[1])
+        bytes.push(parts[2])
+        bytes.push(parts[3])
+      } else {
+        // IPv6: 16 bytes (simplified)
+        const ipv6Buf = this.ipv6ToBytes(ip)
+        bytes.push((ipBits << 7) | (ipv6Buf[0] & 0x7F))
+        bytes.push(...ipv6Buf.slice(1))
+      }
+
+      // Port (2 bytes, big-endian)
+      bytes.push((port >> 8) & 0xFF)
+      bytes.push(port & 0xFF)
+
+      // Session key (variable-length)
+      const keyData = callToken.sessionKey
+      const keyBuf = typeof keyData === 'string'
+        ? new TextEncoder().encode(keyData)
+        : keyData
+      bytes.push(keyBuf.length)
+      bytes.push(...keyBuf)
+
+      // Codec (1 byte enum)
+      const codecMap = { 'opus': 0, 'pcm': 1, 'aac': 2 }
+      bytes.push(codecMap[callToken.codec] || 0)
+
+      // Quality (1 byte enum)
+      const qualityMap = { 'sd': 0, 'hd': 1, 'vhd': 2 }
+      bytes.push(qualityMap[callToken.quality] || 1)
+
+      // Media types (1 byte bitmask)
+      let mediaBitmask = 0
+      if (callToken.mediaTypes?.includes('audio')) mediaBitmask |= 0x01
+      if (callToken.mediaTypes?.includes('video')) mediaBitmask |= 0x02
+      bytes.push(mediaBitmask)
+
+      // Convert to hex string
+      return bytes.map(b => ('0' + b.toString(16)).slice(-2)).join('')
+    } catch (error) {
+      console.error(`[CallToken] Failed to encode attributes:`, error)
+      return '00'  // Fallback to empty if encoding fails
+    }
+  }
+
+  /**
+   * Helper: Convert IPv6 string to bytes
+   * @private
+   */
+  ipv6ToBytes(ip) {
+    const parts = ip.split(':').filter(p => p.length > 0)
+    const bytes = new Uint8Array(16)
+    let byteIndex = 0
+
+    for (let i = 0; i < parts.length && byteIndex < 16; i++) {
+      const val = parseInt(parts[i], 16) || 0
+      bytes[byteIndex++] = (val >> 8) & 0xFF
+      bytes[byteIndex++] = val & 0xFF
+    }
+
+    return Array.from(bytes)
+  }
+
+  /**
    * Create and broadcast a call token to the blockchain
    *
    * PPV (Proof Payment Verification) flow:
@@ -51,11 +154,15 @@ class CallTokenManager {
     this.log(`Creating call token for ${callToken.callee}`, 'info')
 
     try {
-      // Create simple P token for call signaling (metadata stays in signaling layer)
+      // Encode call connection information into tokenAttributes (byte-efficient binary format)
+      const encodedAttributes = this.encodeCallAttributes(callToken)
+      console.debug(`[CallToken] Encoded attributes: ${encodedAttributes.length / 2} bytes`)
+
+      // Create P token for call signaling with encoded connection info
       const result = await this.tokenBuilder.createGenesis({
         tokenName: `CALL-${callerIdent}`,
         tokenScript: '',  // No consensus rules needed
-        attributes: '00',  // Empty (metadata not stored in token)
+        attributes: encodedAttributes,  // Encoded call connection info (IP, port, session key, etc.)
         supply: CALL_TOKEN_RULES.supply,
         divisibility: CALL_TOKEN_RULES.divisibility,
         restrictions: CALL_TOKEN_RULES.restrictions,
