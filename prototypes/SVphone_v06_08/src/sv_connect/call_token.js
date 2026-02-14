@@ -1,8 +1,15 @@
 /**
  * Call Token Manager (v06.08)
  *
- * Handles creation, encoding, and broadcasting of SVphone call tokens
- * Separates call token logic from the main phone interface
+ * Orchestrates the full lifecycle of SVphone call tokens:
+ * - Creates genesis token with CALL_TOKEN_RULES
+ * - Transfers token to recipient (makes discoverable via polling)
+ * - Waits for Merkle proof confirmation (BLOCKING - required for calls)
+ *
+ * Note: Call tokens must be confirmed on blockchain before use.
+ * This ensures only valid tokens can initiate connections (~10 minute wait).
+ *
+ * Provides user-facing logging on top of tokenBuilder infrastructure
  */
 
 // CALL token rules (immutable, defined once here)
@@ -21,9 +28,16 @@ class CallTokenManager {
 
   /**
    * Create and broadcast a call token to the blockchain
-   * Handles: encoding, minting, transfer, and confirmation polling
    *
-   * @param {Object} callToken - Call token object from signaling
+   * Full lifecycle orchestration (BLOCKING - waits for confirmation):
+   * 1. Creates genesis token (tokenBuilder.createGenesis)
+   * 2. Transfers to recipient (tokenBuilder.createTransfer)
+   * 3. Waits for Merkle proof confirmation (tokenBuilder.pollForProof, ~10 minutes)
+   *
+   * Note: This method blocks until the token is confirmed on the blockchain.
+   * Only confirmed tokens can initiate calls.
+   *
+   * @param {Object} callToken - Call token object from signaling (must have caller, callee)
    * @returns {Promise<Object>} {tokenId, txId, tokenIds}
    */
   async createAndBroadcastCallToken(callToken) {
@@ -57,10 +71,44 @@ class CallTokenManager {
       this.log(`View on blockchain: https://whatsonchain.com/tx/${genesisTx}`, 'info')
 
       // Transfer token to recipient so they can find it via polling
-      await this.transferCallToken(tokenId, callToken.callee)
+      console.debug(`[CallToken] 📤 Transferring token to recipient: ${callToken.callee}`)
+      this.log(`📤 Transferring token to recipient...`, 'info')
 
-      // Poll for Merkle proof (background, don't block)
-      this.waitForCallTokenConfirmation(tokenId, result.txId)
+      try {
+        const transferResult = await this.tokenBuilder.createTransfer(tokenId, callToken.callee)
+        console.debug(`[CallToken] ✅ Token transferred successfully!`)
+        console.debug(`[CallToken] Transfer TX: ${transferResult.txId}`)
+        this.log(`✓ Token transferred to recipient: ${transferResult.txId}`, 'success')
+        this.log(`View transfer on blockchain: https://whatsonchain.com/tx/${transferResult.txId}`, 'info')
+      } catch (err) {
+        console.error(`[CallToken] ❌ Token transfer failed:`, err)
+        this.log(`⚠️ Token transfer failed: ${err.message}`, 'warning')
+        throw err
+      }
+
+      // Wait for Merkle proof confirmation (BLOCKING - required before call can proceed)
+      console.debug(`[CallToken] ⏳ Waiting for token confirmation before initiating call`)
+      this.log('✓ Token created. Call will proceed when confirmed (~10 minutes)...', 'info')
+
+      try {
+        const found = await this.tokenBuilder.pollForProof(tokenId, result.txId, (msg) => {
+          console.debug(`[CallToken] Proof status: ${msg}`)
+          // Don't spam UI with every polling message, just show in console
+        })
+
+        if (found) {
+          console.debug(`[CallToken] ✅ Merkle proof confirmed!`)
+          this.log('✓ Token confirmed - proceeding with call', 'success')
+        } else {
+          console.warn(`[CallToken] ⚠️ Proof polling timed out`)
+          this.log('⚠️ Token confirmation timed out. Call may not proceed.', 'warning')
+          throw new Error('Token confirmation timed out')
+        }
+      } catch (err) {
+        console.error(`[CallToken] Error polling for proof:`, err)
+        this.log(`Error waiting for confirmation: ${err.message}`, 'error')
+        throw err
+      }
 
       return { tokenId, txId: result.txId, tokenIds: result.tokenIds }
     } catch (err) {
@@ -70,56 +118,6 @@ class CallTokenManager {
     }
   }
 
-  /**
-   * Transfer call token to recipient
-   * Allows recipient to find token via polling
-   */
-  async transferCallToken(tokenId, recipientAddress) {
-    console.debug(`[CallToken] 📤 Transferring token to recipient: ${recipientAddress}`)
-    this.log(`📤 Transferring token to recipient...`, 'info')
-
-    try {
-      const transferResult = await this.tokenBuilder.createTransfer(tokenId, recipientAddress)
-      console.debug(`[CallToken] ✅ Token transferred successfully!`)
-      console.debug(`[CallToken] Transfer TX: ${transferResult.txId}`)
-      this.log(`✓ Token transferred to recipient: ${transferResult.txId}`, 'success')
-      this.log(`View transfer on blockchain: https://whatsonchain.com/tx/${transferResult.txId}`, 'info')
-      return transferResult
-    } catch (err) {
-      console.error(`[CallToken] ❌ Token transfer failed:`, err)
-      this.log(`⚠️ Token transfer failed: ${err.message}`, 'warning')
-      // Continue anyway - token was created, transfer can be retried
-      throw err
-    }
-  }
-
-  /**
-   * Wait for Merkle proof confirmation
-   * Polls for proof in background, updates UI when confirmed
-   */
-  async waitForCallTokenConfirmation(tokenId, txId) {
-    console.debug(`[CallToken] ⏳ Starting proof confirmation polling`)
-    this.log('⏳ Polling for Merkle proof (may take ~10 minutes)...', 'info')
-
-    try {
-      const found = await this.tokenBuilder.pollForProof(tokenId, txId, (msg) => {
-        console.debug(`[CallToken] Proof status: ${msg}`)
-        this.log(`Proof status: ${msg}`, 'debug')
-      })
-
-      if (found) {
-        console.debug(`[CallToken] ✅ Merkle proof confirmed!`)
-        this.log('✓ Merkle proof confirmed - token is now fully verified', 'success')
-        // Note: Caller should update UI state (e.g., call button status)
-        return true
-      }
-      return false
-    } catch (err) {
-      console.error(`[CallToken] Error polling for proof:`, err)
-      this.log(`Error polling for proof: ${err.message}`, 'warning')
-      return false
-    }
-  }
 }
 
 // Export for browser
