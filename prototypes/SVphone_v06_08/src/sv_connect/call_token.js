@@ -131,6 +131,25 @@ class CallTokenManager {
   }
 
   /**
+   * Helper: Compute 32-bit truncated SHA256 hash of an address
+   * Returns first 8 hex characters (32 bits) for compact identification
+   * @private
+   */
+  async hashAddress(address) {
+    try {
+      const encoder = new TextEncoder()
+      const data = encoder.encode(address)
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+      const hashArray = Array.from(new Uint8Array(hashBuffer))
+      const hashHex = hashArray.map(b => ('0' + b.toString(16)).slice(-2)).join('')
+      return hashHex.substring(0, 8)  // Return first 32 bits (8 hex chars)
+    } catch (error) {
+      console.error(`[CallToken] Failed to hash address:`, error)
+      return '00000000'  // Fallback if hashing fails
+    }
+  }
+
+  /**
    * Create and broadcast a call token to the blockchain
    *
    * PPV (Proof Payment Verification) flow:
@@ -168,6 +187,14 @@ class CallTokenManager {
       const encodedAttributes = this.encodeCallAttributes(callToken)
       console.debug(`[CallToken] Encoded attributes: ${encodedAttributes.length / 2} bytes`)
 
+      // Compute address hashes for tokenRules restrictions field (caller + callee identification)
+      // SHA256 truncated to 32 bits (8 hex chars) per address = 16 hex chars total
+      const callerHash = await this.hashAddress(callToken.caller)
+      const calleeHash = await this.hashAddress(callToken.callee)
+      const restrictionsHash = callerHash + calleeHash  // Concatenate: 16 hex chars
+      console.debug(`[CallToken] Address hashes: caller=${callerHash}, callee=${calleeHash}`)
+      console.debug(`[CallToken] Restrictions field (both hashes): ${restrictionsHash}`)
+
       // Create P token for call signaling with encoded connection info
       const result = await this.tokenBuilder.createGenesis({
         tokenName: `CALL-${callerIdent}`,
@@ -175,7 +202,7 @@ class CallTokenManager {
         attributes: encodedAttributes,  // Encoded call connection info (IP, port, session key, etc.)
         supply: CALL_TOKEN_RULES.supply,
         divisibility: CALL_TOKEN_RULES.divisibility,
-        restrictions: CALL_TOKEN_RULES.restrictions,
+        restrictions: restrictionsHash,  // Caller + callee address hashes (32-bit each)
         rulesVersion: CALL_TOKEN_RULES.version,
         stateData: '00'  // Empty (state tracked in signaling layer)
       })
