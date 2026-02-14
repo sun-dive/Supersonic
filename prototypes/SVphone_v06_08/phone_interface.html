@@ -1547,6 +1547,12 @@
                     this.signaling.startPolling(checkIncomingTokensFn, verifyTokenFn)
                     this.log(`[RECV] ✓ Polling initialized (interval: ${this.signaling.pollingInterval}ms)`, 'debug')
                     this.log('📞 Background polling for incoming calls started', 'success')
+
+                    // Listen for incoming call events from signaling layer
+                    this.signaling.on('call:incoming', (data) => {
+                        this.log(`[RECV] 🔔 Signaling layer detected incoming call`, 'info')
+                        this.showIncomingCall(data.caller, data.callTokenId)
+                    })
                 } catch (error) {
                     this.log('[BgPolling] Failed to start: ' + error.message, 'error')
                 }
@@ -1856,11 +1862,15 @@
                         video: true
                     })
 
+                    // Extract caller's connection data from token attributes for P2P
+                    // Use signaling parser which handles both binary v1 and legacy JSON formats
+                    const callerAttrs = this.signaling.parseTokenAttributes(receivedToken.tokenAttributes)
+
                     // Send the token back to the caller with response data in stateData
                     const tokenBuilder = window.tokenBuilder
                     if (tokenBuilder) {
                         try {
-                            const callerAddress = receivedToken.caller || JSON.parse(receivedToken.tokenAttributes || '{}').caller
+                            const callerAddress = receivedToken.caller || callerAttrs.caller
                             if (callerAddress) {
                                 this.log(`📤 Sending token back to caller ${callerAddress}...`, 'info')
                                 console.debug(`[SEND] Response data:`, responseData)
@@ -1879,8 +1889,7 @@
                         }
                     }
 
-                    // Extract caller's connection data from token attributes for P2P
-                    const callerAttrs = JSON.parse(receivedToken.tokenAttributes || '{}')
+                    // Initiate P2P connection to caller using their connection data
                     if (callerAttrs.caller && callerAttrs.senderIp && callerAttrs.senderPort) {
                         console.debug(`[P2P] 🔗 Initiating P2P connection back to caller: ${callerAttrs.caller}`)
                         this.initiateP2PConnection(this.currentCallToken, callerAttrs.caller, callerAttrs.senderIp, callerAttrs.senderPort)
@@ -1937,7 +1946,9 @@
                                 if (tokenBuilder && tokenStore) {
                                     const receivedToken = await tokenStore.getToken(this.currentCallToken)
                                     if (receivedToken) {
-                                        const callerAddress = receivedToken.caller || JSON.parse(receivedToken.tokenAttributes || '{}').caller
+                                        // Parse token attributes using signaling layer (handles binary v1 and legacy JSON)
+                                        const callerAttrsAudio = this.signaling.parseTokenAttributes(receivedToken.tokenAttributes)
+                                        const callerAddress = receivedToken.caller || callerAttrsAudio.caller
                                         if (callerAddress) {
                                             try {
                                                 const transferResult = await tokenBuilder.createTransfer(
@@ -1955,17 +1966,10 @@
                                 }
                             }
 
-                            // Extract caller's connection data from token attributes for P2P
-                            const tokenStore = window.tokenStore
-                            if (tokenStore) {
-                                const receivedTokenForP2P = await tokenStore.getToken(this.currentCallToken)
-                                if (receivedTokenForP2P) {
-                                    const callerAttrs = JSON.parse(receivedTokenForP2P.tokenAttributes || '{}')
-                                    if (callerAttrs.caller && callerAttrs.senderIp && callerAttrs.senderPort) {
-                                        console.debug(`[P2P] 🔗 Initiating P2P connection back to caller (audio-only): ${callerAttrs.caller}`)
-                                        this.initiateP2PConnection(this.currentCallToken, callerAttrs.caller, callerAttrs.senderIp, callerAttrs.senderPort)
-                                    }
-                                }
+                            // Initiate P2P connection using caller attributes (already parsed above)
+                            if (callerAttrsAudio.caller && callerAttrsAudio.senderIp && callerAttrsAudio.senderPort) {
+                                console.debug(`[P2P] 🔗 Initiating P2P connection back to caller (audio-only): ${callerAttrsAudio.caller}`)
+                                this.initiateP2PConnection(this.currentCallToken, callerAttrsAudio.caller, callerAttrsAudio.senderIp, callerAttrsAudio.senderPort)
                             }
 
                             document.getElementById('incomingCall').style.display = 'none'
