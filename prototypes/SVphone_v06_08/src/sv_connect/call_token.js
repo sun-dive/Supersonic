@@ -1,13 +1,14 @@
 /**
- * Call Token Manager (v06.08)
+ * Call Token Manager (v06.08) - PPV (Proof Payment Verification) Implementation
  *
- * Orchestrates the full lifecycle of SVphone call tokens:
+ * Orchestrates the full lifecycle of SVphone call tokens with instant transfer UX:
  * - Creates genesis token with CALL_TOKEN_RULES
- * - Transfers token to recipient (makes discoverable via polling)
- * - Waits for Merkle proof confirmation (BLOCKING - required for calls)
+ * - Waits for genesis confirmation (BLOCKING - ~10 minutes, required before transfer)
+ * - Transfers token to recipient (INSTANT - no wait after genesis confirmed)
+ * - Continues Merkle proof verification in background (optional)
  *
- * Note: Call tokens must be confirmed on blockchain before use.
- * This ensures only valid tokens can initiate connections (~10 minute wait).
+ * PPV Model: Genesis MUST be confirmed before transfer. Subsequent transfers are instant.
+ * This ensures only valid tokens initiate connections while providing instant transfer UX.
  *
  * Provides user-facing logging on top of tokenBuilder infrastructure
  */
@@ -29,13 +30,15 @@ class CallTokenManager {
   /**
    * Create and broadcast a call token to the blockchain
    *
-   * Full lifecycle orchestration (BLOCKING - waits for confirmation):
-   * 1. Creates genesis token (tokenBuilder.createGenesis)
-   * 2. Transfers to recipient (tokenBuilder.createTransfer)
-   * 3. Waits for Merkle proof confirmation (tokenBuilder.pollForProof, ~10 minutes)
+   * PPV (Proof Payment Verification) flow:
+   * 1. Creates genesis token (tokenBuilder.createGenesis, instant in mempool)
+   * 2. Waits for genesis confirmation (tokenBuilder.pollForProof, ~10 minutes, BLOCKING)
+   * 3. Transfers to recipient (tokenBuilder.createTransfer, INSTANT after genesis confirmed)
+   * 4. Returns immediately (instant UX after genesis confirmed)
+   * 5. Continues background Merkle proof polling (optional, non-blocking)
    *
-   * Note: This method blocks until the token is confirmed on the blockchain.
-   * Only confirmed tokens can initiate calls.
+   * Note: Genesis MUST be confirmed before transfer can occur.
+   * After genesis confirmation, transfer is instant (no wait).
    *
    * @param {Object} callToken - Call token object from signaling (must have caller, callee)
    * @returns {Promise<Object>} {tokenId, txId, tokenIds}
@@ -70,15 +73,40 @@ class CallTokenManager {
       this.log(`Genesis TX: ${genesisTx}`, 'success')
       this.log(`View on blockchain: https://whatsonchain.com/tx/${genesisTx}`, 'info')
 
-      // Transfer token to recipient so they can find it via polling
-      console.debug(`[CallToken] 📤 Transferring token to recipient: ${callToken.callee}`)
-      this.log(`📤 Transferring token to recipient...`, 'info')
+      // PPV Model: Wait for genesis confirmation (BLOCKING - required before transfer)
+      console.debug(`[CallToken] ⏳ Waiting for genesis confirmation before transfer`)
+      this.log('⏳ Waiting for genesis confirmation (~10 minutes)...', 'info')
 
       try {
-        const transferResult = await this.tokenBuilder.createTransfer(tokenId, callToken.callee)
-        console.debug(`[CallToken] ✅ Token transferred successfully!`)
+        const genesisConfirmed = await this.tokenBuilder.pollForProof(tokenId, result.txId, (msg) => {
+          console.debug(`[CallToken] Genesis proof status: ${msg}`)
+          // Don't spam UI with every polling message, just show in console
+        })
+
+        if (genesisConfirmed) {
+          console.debug(`[CallToken] ✅ Genesis confirmed!`)
+          this.log('✓ Genesis confirmed - transferring token (instant)...', 'success')
+        } else {
+          console.warn(`[CallToken] ⚠️ Genesis confirmation timed out`)
+          this.log('⚠️ Genesis confirmation timed out. Cannot transfer.', 'warning')
+          throw new Error('Genesis confirmation timed out')
+        }
+      } catch (err) {
+        console.error(`[CallToken] Error waiting for genesis confirmation:`, err)
+        this.log(`Error waiting for genesis confirmation: ${err.message}`, 'error')
+        throw err
+      }
+
+      // Transfer token to recipient (INSTANT after genesis confirmed)
+      console.debug(`[CallToken] 📤 Transferring confirmed token to recipient: ${callToken.callee}`)
+      this.log(`📤 Transferring token to recipient (instant)...`, 'info')
+
+      let transferResult
+      try {
+        transferResult = await this.tokenBuilder.createTransfer(tokenId, callToken.callee)
+        console.debug(`[CallToken] ✅ Token transferred instantly!`)
         console.debug(`[CallToken] Transfer TX: ${transferResult.txId}`)
-        this.log(`✓ Token transferred to recipient: ${transferResult.txId}`, 'success')
+        this.log(`✓ Token transferred instantly: ${transferResult.txId}`, 'success')
         this.log(`View transfer on blockchain: https://whatsonchain.com/tx/${transferResult.txId}`, 'info')
       } catch (err) {
         console.error(`[CallToken] ❌ Token transfer failed:`, err)
@@ -86,29 +114,17 @@ class CallTokenManager {
         throw err
       }
 
-      // Wait for Merkle proof confirmation (BLOCKING - required before call can proceed)
-      console.debug(`[CallToken] ⏳ Waiting for token confirmation before initiating call`)
-      this.log('✓ Token created. Call will proceed when confirmed (~10 minutes)...', 'info')
-
-      try {
-        const found = await this.tokenBuilder.pollForProof(tokenId, result.txId, (msg) => {
-          console.debug(`[CallToken] Proof status: ${msg}`)
-          // Don't spam UI with every polling message, just show in console
-        })
-
+      // Start background Merkle proof polling (OPTIONAL - non-blocking)
+      console.debug(`[CallToken] Starting background Merkle proof polling`)
+      this.tokenBuilder.pollForProof(tokenId, transferResult.txId, (msg) => {
+        console.debug(`[CallToken] Transfer proof status: ${msg}`)
+      }).then((found) => {
         if (found) {
-          console.debug(`[CallToken] ✅ Merkle proof confirmed!`)
-          this.log('✓ Token confirmed - proceeding with call', 'success')
-        } else {
-          console.warn(`[CallToken] ⚠️ Proof polling timed out`)
-          this.log('⚠️ Token confirmation timed out. Call may not proceed.', 'warning')
-          throw new Error('Token confirmation timed out')
+          console.debug(`[CallToken] ✅ Transfer Merkle proof confirmed (background)`)
         }
-      } catch (err) {
-        console.error(`[CallToken] Error polling for proof:`, err)
-        this.log(`Error waiting for confirmation: ${err.message}`, 'error')
-        throw err
-      }
+      }).catch((err) => {
+        console.debug(`[CallToken] Transfer proof polling error (non-critical):`, err)
+      })
 
       return { tokenId, txId: result.txId, tokenIds: result.tokenIds }
     } catch (err) {
