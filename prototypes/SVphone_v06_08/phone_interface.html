@@ -1480,28 +1480,30 @@
                                 }
 
                                 // Parse hex-encoded tokenAttributes to get call metadata
+                                // Supports both binary format (v1) and legacy JSON format
                                 try {
                                   if (!t.tokenAttributes) {
                                     appInstance.log(`[RECV]       ⚠️  No tokenAttributes found`, 'debug')
                                     return false
                                   }
 
-                                  let attributesJson = ''
-                                  try {
+                                  // Use signaling layer's parser (auto-detects binary v1 or legacy JSON)
+                                  let attrs
+                                  if (appInstance.signaling && appInstance.signaling.parseTokenAttributes) {
+                                    attrs = appInstance.signaling.parseTokenAttributes(t.tokenAttributes)
+                                  } else {
+                                    // Fallback: Try legacy JSON parsing if signaling not available
+                                    appInstance.log(`[RECV]       ⚠️  Signaling parser unavailable, trying legacy JSON`, 'debug')
+                                    let attributesJson = ''
                                     for (let i = 0; i < t.tokenAttributes.length; i += 2) {
                                       const hex = t.tokenAttributes.substr(i, 2)
                                       attributesJson += String.fromCharCode(parseInt(hex, 16))
                                     }
-                                  } catch (parseErr) {
-                                    appInstance.log(`[RECV]       ❌ Failed to decode hex attributes: ${parseErr.message}`, 'warning')
-                                    return false
+                                    attrs = JSON.parse(attributesJson)
                                   }
 
-                                  let attrs
-                                  try {
-                                    attrs = JSON.parse(attributesJson)
-                                  } catch (jsonErr) {
-                                    appInstance.log(`[RECV]       ❌ Hex decoded but not valid JSON: ${jsonErr.message}`, 'warning')
+                                  if (!attrs || !attrs.callee) {
+                                    appInstance.log(`[RECV]       ❌ Failed to parse attributes or missing callee`, 'warning')
                                     return false
                                   }
 
@@ -1515,7 +1517,7 @@
                                     appInstance.log(`[RECV]       ✅ MATCH! This token is for me!`, 'debug')
                                     return true
                                 } catch (e) {
-                                  appInstance.log('[RECV]       ❌ Unexpected error: ' + e.message, 'error')
+                                  appInstance.log('[RECV]       ❌ Unexpected error parsing token attributes: ' + e.message, 'error')
                                 }
                                 return false
                             })
