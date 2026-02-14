@@ -191,13 +191,13 @@ class CallTokenManager {
       this.log(`View on blockchain: https://whatsonchain.com/tx/${genesisTx}`, 'info')
 
       // PPV Model: Wait for genesis confirmation (BLOCKING - required before transfer)
-      console.debug(`[CallToken] ⏳ Waiting for genesis confirmation before transfer`)
-      this.log('⏳ Waiting for genesis confirmation (~10 minutes)...', 'info')
+      console.debug(`[CallToken] ⏳ Waiting for genesis confirmation before transfer - polling every 5s`)
+      this.log('⏳ Waiting for genesis confirmation (~10 minutes) - polling every 5s...', 'info')
 
       try {
-        const genesisConfirmed = await this.tokenBuilder.pollForProof(tokenId, result.txId, (msg) => {
-          console.debug(`[CallToken] Genesis proof status: ${msg}`)
-          // Don't spam UI with every polling message, just show in console
+        const genesisConfirmed = await this.tokenBuilder.pollForProof(tokenId, result.txId, () => {
+          // Suppress individual polling messages to keep debug console clean
+          // See one "polling started" message above instead of hundreds of updates
         })
 
         if (genesisConfirmed) {
@@ -240,15 +240,15 @@ class CallTokenManager {
       }
 
       // Start background Merkle proof polling (OPTIONAL - non-blocking)
-      console.debug(`[CallToken] Starting background Merkle proof polling`)
-      this.tokenBuilder.pollForProof(tokenId, transferResult.txId, (msg) => {
-        console.debug(`[CallToken] Transfer proof status: ${msg}`)
+      console.debug(`[CallToken] Starting background Merkle proof polling (transfer confirmation)`)
+      this.tokenBuilder.pollForProof(tokenId, transferResult.txId, () => {
+        // Suppress individual polling updates - background polling only logs on completion
       }).then((found) => {
         if (found) {
           console.debug(`[CallToken] ✅ Transfer Merkle proof confirmed (background)`)
         }
       }).catch((err) => {
-        console.debug(`[CallToken] Transfer proof polling error (non-critical):`, err)
+        console.debug(`[CallToken] Transfer proof polling (background, non-critical):`, err.message)
       })
 
       return { tokenId, txId: result.txId, tokenIds: result.tokenIds }
