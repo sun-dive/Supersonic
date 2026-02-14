@@ -972,6 +972,9 @@
                 // Initialize call token manager (will be set up in init())
                 this.callTokenManager = null
 
+                // UDP port for direct P2P communication (assigned on startup)
+                this.assignedUdpPort = null
+
                 this.init()
             }
 
@@ -1003,10 +1006,9 @@
                     // Create all components
                     this.signaling = new CallSignaling()
                 this.peerConnection = new PeerConnection({
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
-                    ]
+                    // Direct P2P with no centralized STUN servers
+                    // Uses mDNS discovery and standard VoIP ports (3478-3497)
+                    // iceServers: [] (empty - default in PeerConnection)
                 })
                 this.callManager = new CallManager(this.signaling, this.peerConnection)
                 this.codecs = new CodecNegotiation()
@@ -1184,10 +1186,16 @@
                 const myIpField = document.getElementById('myIp')
                 const myPortField = document.getElementById('myPort')
 
-                // Use standard SIP port (most likely to work without configuration)
-                myPortField.value = 5060
+                // Assign random UDP port in standard VoIP range (3478-3497)
+                // These ports are typically open on firewalls for apps like FaceTime and Game Center
+                const minPort = 3478
+                const maxPort = 3497
+                const randomPort = minPort + Math.floor(Math.random() * (maxPort - minPort + 1))
+                myPortField.value = randomPort
+                this.assignedUdpPort = randomPort
+                console.log(`[SVphone] Assigned UDP port: ${randomPort} (VoIP range 3478-3497)`)
 
-                // Try to detect public IP via STUN
+                // Try to detect public IP via local network detection
                 this.detectPublicIP().then(ip => {
                     if (ip) {
                         myIpField.value = ip
@@ -1201,9 +1209,10 @@
 
             async detectPublicIP() {
                 return new Promise((resolve) => {
-                    // Use WebRTC to detect actual local/public IP via ICE candidates
+                    // Use WebRTC to detect local IP via mDNS (no centralized STUN needed)
+                    // Direct P2P discovery using native browser capabilities
                     const pc = new RTCPeerConnection({
-                        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                        iceServers: []  // Empty - use mDNS only
                     })
 
                     let ipFound = false
