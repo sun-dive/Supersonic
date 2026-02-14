@@ -1,30 +1,170 @@
 /**
- * WebRTC Media Handler (v06.08)
+ * WebRTC Peer Connection Manager (v06.00)
  *
- * Minimal direct P2P media connection.
- * No STUN/TURN (addresses provided via blockchain call token).
- * No ICE candidates (direct connection to known address).
+ * Manages peer-to-peer media connections for voice and video calls.
+ * Uses direct P2P with mDNS discovery for NAT traversal.
+ * Firewalls typically allow ports 3478-3497 (standard VoIP ports), enabling traversal.
+ * Uses DTLS-SRTP for encryption.
  */
 
 class PeerConnection {
-  constructor() {
+  constructor(options = {}) {
     this.peerConnections = new Map() // Map<peerId, RTCPeerConnection>
-    this.mediaStream = null
     this.listeners = new Map()
+
+    // ICE configuration: Direct P2P without centralized STUN/TURN servers
+    // WebRTC uses mDNS and direct connection for peer discovery
+    // Firewalls typically keep ports 3478-3497 open (standard VoIP ports used by FaceTime, Game Center, etc.)
+    // This allows NAT traversal without relying on centralized servers
+    this.iceServers = options.iceServers || []  // Empty - direct P2P only
+
+    // Optional TURN server if caller provides one (for restricted networks)
+    // Defaults to port 3478 (standard STUN/TURN port)
+    if (options.turnServer) {
+      this.iceServers.push({
+        urls: [`turn:${options.turnServer.host}:${options.turnServer.port || 3478}`],
+        username: options.turnServer.username,
+        credential: options.turnServer.credential
+      })
+    }
+
+    // Media constraints
+    this.audioConstraints = options.audioConstraints || {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+
+    this.videoConstraints = options.videoConstraints || {
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 }
+    }
+
+    // State tracking
+    this.mediaStream = null
+    this.pendingCandidates = new Map() // Map<peerId, [RTCIceCandidate]>
   }
 
   /**
-   * Initialize local media stream (audio/video)
+   * Initialize media stream (audio/video)
+   *
+   * @param {Object} options - Media options
+   * @param {boolean} options.audio - Enable audio
+   * @param {boolean} options.video - Enable video
+   * @returns {Promise<MediaStream>}
    */
   async initializeMediaStream(options = { audio: true, video: true }) {
     try {
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: options.audio || false,
-        video: options.video ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false
-      })
-      console.log('[PeerConnection] Media stream initialized')
-      this.emit('media:ready', { mediaStream: this.mediaStream })
-      return this.mediaStream
+      // First attempt: Try full audio+video with ideal constraints
+      const constraints = {
+        audio: options.audio ? this.audioConstraints : false,
+        video: options.video ? this.videoConstraints : false
+      }
+
+      try {
+        this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
+        console.log('[PeerConnection] Media stream initialized:', {
+          audioTracks: this.mediaStream.getAudioTracks().length,
+          videoTracks: this.mediaStream.getVideoTracks().length
+        })
+        this.emit('media:ready', { mediaStream: this.mediaStream })
+        return this.mediaStream
+      } catch (initialError) {
+        // Check if this is a permission/security error
+        const isPermissionError = initialError.name === 'NotAllowedError' ||
+                                  initialError.name === 'SecurityError' ||
+                                  initialError.message?.includes('Permission denied')
+
+        // If video constraints are too strict (and not a permission error), try with relaxed constraints
+        if (options.video && !isPermissionError) {
+          console.warn('[PeerConnection] Video constraints too strict, trying with relaxed constraints:', initialError.message)
+          const relaxedConstraints = {
+            audio: options.audio ? this.audioConstraints : false,
+            video: options.video ? true : false  // Just request video without constraints
+          }
+          try {
+            this.mediaStream = await navigator.mediaDevices.getUserMedia(relaxedConstraints)
+            console.log('[PeerConnection] Media stream initialized with relaxed constraints:', {
+              audioTracks: this.mediaStream.getAudioTracks().length,
+              videoTracks: this.mediaStream.getVideoTracks().length
+            })
+            this.emit('media:ready', { mediaStream: this.mediaStream })
+            return this.mediaStream
+          } catch (relaxedError) {
+            // Check again if this is a permission error
+            const isRelaxedPermissionError = relaxedError.name === 'NotAllowedError' ||
+                                             relaxedError.name === 'SecurityError' ||
+                                             relaxedError.message?.includes('Permission denied')
+
+            // If video still fails and it's not a permission error, try audio-only
+            if (options.audio && !isRelaxedPermissionError) {
+              console.warn('[PeerConnection] Video unavailable, falling back to audio-only:', relaxedError.message)
+              const audioOnlyConstraints = {
+                audio: this.audioConstraints,
+                video: false
+              }
+              this.mediaStream = await navigator.mediaDevices.getUserMedia(audioOnlyConstraints)
+              console.log('[PeerConnection] Audio-only stream initialized:', {
+                audioTracks: this.mediaStream.getAudioTracks().length
+              })
+              this.emit('media:ready', { mediaStream: this.mediaStream, audioOnly: true })
+              return this.mediaStream
+            } else if (isRelaxedPermissionError) {
+              // Permission error on video - try audio only as last resort
+              if (options.audio) {
+                console.warn('[PeerConnection] Permission denied for video, trying audio-only:', relaxedError.message)
+                try {
+                  const audioOnlyConstraints = {
+                    audio: this.audioConstraints,
+                    video: false
+                  }
+                  this.mediaStream = await navigator.mediaDevices.getUserMedia(audioOnlyConstraints)
+                  console.log('[PeerConnection] Audio-only stream initialized (permission granted for audio):', {
+                    audioTracks: this.mediaStream.getAudioTracks().length
+                  })
+                  this.emit('media:ready', { mediaStream: this.mediaStream, audioOnly: true })
+                  return this.mediaStream
+                } catch (audioError) {
+                  // Audio also denied
+                  this.emitPermissionError(audioError)
+                  throw this.createPermissionErrorMessage(audioError)
+                }
+              } else {
+                this.emitPermissionError(relaxedError)
+                throw this.createPermissionErrorMessage(relaxedError)
+              }
+            } else {
+              throw relaxedError
+            }
+          }
+        } else if (isPermissionError) {
+          // Permission denied on first attempt - try audio-only as fallback
+          if (options.audio && options.video) {
+            console.warn('[PeerConnection] Permission denied for audio+video, trying audio-only:', initialError.message)
+            try {
+              const audioOnlyConstraints = {
+                audio: this.audioConstraints,
+                video: false
+              }
+              this.mediaStream = await navigator.mediaDevices.getUserMedia(audioOnlyConstraints)
+              console.log('[PeerConnection] Audio-only stream initialized (permission granted for audio):', {
+                audioTracks: this.mediaStream.getAudioTracks().length
+              })
+              this.emit('media:ready', { mediaStream: this.mediaStream, audioOnly: true })
+              return this.mediaStream
+            } catch (audioError) {
+              this.emitPermissionError(audioError)
+              throw this.createPermissionErrorMessage(audioError)
+            }
+          } else {
+            this.emitPermissionError(initialError)
+            throw this.createPermissionErrorMessage(initialError)
+          }
+        } else {
+          throw initialError
+        }
+      }
     } catch (error) {
       console.error('[PeerConnection] Failed to get media stream:', error)
       this.emit('media:error', { error })
@@ -33,7 +173,7 @@ class PeerConnection {
   }
 
   /**
-   * Stop all media tracks
+   * Stop all media streams
    */
   stopMediaStream() {
     if (this.mediaStream) {
@@ -44,35 +184,109 @@ class PeerConnection {
   }
 
   /**
-   * Create peer connection for a call
+   * Create a user-friendly error message for permission errors
+   * @private
    */
-  createPeerConnection(peerId) {
+  createPermissionErrorMessage(error) {
+    const errorName = error.name || 'Unknown'
+    const errorMessage = error.message || ''
+
+    if (errorName === 'NotAllowedError') {
+      return new Error(
+        'Media access denied. Please:\n' +
+        '1. Check browser permission settings\n' +
+        '2. Make sure this site is allowed to access microphone/camera\n' +
+        '3. Try allowing permissions when prompted'
+      )
+    } else if (errorName === 'SecurityError' || errorMessage.includes('secure')) {
+      return new Error(
+        'Security error accessing media. This may be due to:\n' +
+        '1. Site requires HTTPS connection\n' +
+        '2. Browser security restrictions\n' +
+        '3. Try using HTTPS instead of HTTP'
+      )
+    } else if (errorMessage.includes('Permission denied')) {
+      return new Error(
+        'Permission denied by system:\n' +
+        '1. Check OS-level privacy settings\n' +
+        '2. Allow this browser access to microphone/camera in System Settings\n' +
+        '3. Restart the browser and try again'
+      )
+    } else {
+      return new Error(
+        `Media access error (${errorName}): ${errorMessage}\n` +
+        'Please check browser and system permission settings.'
+      )
+    }
+  }
+
+  /**
+   * Emit permission error event with detailed info
+   * @private
+   */
+  emitPermissionError(error) {
+    console.error('[PeerConnection] Permission error:', {
+      name: error.name,
+      message: error.message,
+      code: error.code
+    })
+    this.emit('media:permission-denied', {
+      error: error,
+      errorName: error.name,
+      errorMessage: error.message
+    })
+  }
+
+  /**
+   * Create peer connection for a call
+   *
+   * @param {string} peerId - Peer identifier
+   * @param {Object} offerSdp - Optional SDP offer to set as remote
+   * @returns {RTCPeerConnection}
+   */
+  createPeerConnection(peerId, offerSdp = null) {
     try {
       const peerConnection = new RTCPeerConnection({
+        iceServers: this.iceServers,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require'
       })
 
+      // Store connection
       this.peerConnections.set(peerId, peerConnection)
+      this.pendingCandidates.set(peerId, [])
 
-      // Add local media tracks
+      // Add media tracks from local stream
       if (this.mediaStream) {
         this.mediaStream.getTracks().forEach(track => {
           peerConnection.addTrack(track, this.mediaStream)
         })
       }
 
-      // Handle remote tracks
+      // ICE candidate handling
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.emit('ice:candidate', {
+            peerId: peerId,
+            candidate: event.candidate
+          })
+          console.log('[PeerConnection] ICE candidate generated for', peerId)
+        } else {
+          console.log('[PeerConnection] ICE gathering complete for', peerId)
+        }
+      }
+
+      // Remote track handling
       peerConnection.ontrack = (event) => {
-        console.log('[PeerConnection] Received remote track:', event.track.kind)
         this.emit('media:track-received', {
           peerId: peerId,
           stream: event.streams[0],
           track: event.track
         })
+        console.log('[PeerConnection] Received remote track:', event.track.kind)
       }
 
-      // Monitor connection state
+      // Connection state monitoring
       peerConnection.onconnectionstatechange = () => {
         console.log('[PeerConnection] Connection state:', peerId, peerConnection.connectionState)
         this.emit('peer:connection-state-changed', {
@@ -80,14 +294,25 @@ class PeerConnection {
           state: peerConnection.connectionState
         })
 
-        if (peerConnection.connectionState === 'connected') {
-          this.emit('peer:connected', { peerId })
-        } else if (peerConnection.connectionState === 'failed') {
+        if (peerConnection.connectionState === 'failed') {
           this.emit('peer:connection-failed', { peerId })
+        } else if (peerConnection.connectionState === 'connected') {
+          this.emit('peer:connected', { peerId })
         }
       }
 
+      // ICE connection state
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log('[PeerConnection] ICE connection state:', peerId, peerConnection.iceConnectionState)
+      }
+
+      // Signaling state
+      peerConnection.onsignalingstatechange = () => {
+        console.log('[PeerConnection] Signaling state:', peerId, peerConnection.signalingState)
+      }
+
       console.log('[PeerConnection] Created peer connection for:', peerId)
+
       return peerConnection
     } catch (error) {
       console.error('[PeerConnection] Failed to create peer connection:', error)
@@ -96,7 +321,10 @@ class PeerConnection {
   }
 
   /**
-   * Create SDP offer
+   * Create and send offer
+   *
+   * @param {string} peerId - Peer identifier
+   * @returns {Promise<RTCSessionDescription>}
    */
   async createOffer(peerId) {
     try {
@@ -111,6 +339,7 @@ class PeerConnection {
       })
 
       await peerConnection.setLocalDescription(offer)
+
       console.log('[PeerConnection] Created offer for:', peerId)
 
       return offer
@@ -121,7 +350,11 @@ class PeerConnection {
   }
 
   /**
-   * Create SDP answer
+   * Create and send answer
+   *
+   * @param {string} peerId - Peer identifier
+   * @param {Object} offerSdp - Remote offer SDP
+   * @returns {Promise<RTCSessionDescription>}
    */
   async createAnswer(peerId, offerSdp) {
     try {
@@ -130,14 +363,17 @@ class PeerConnection {
         peerConnection = this.createPeerConnection(peerId)
       }
 
+      // Set remote description from offer
       const offer = new RTCSessionDescription({
         type: 'offer',
         sdp: offerSdp
       })
       await peerConnection.setRemoteDescription(offer)
 
+      // Create answer
       const answer = await peerConnection.createAnswer()
       await peerConnection.setLocalDescription(answer)
+
       console.log('[PeerConnection] Created answer for:', peerId)
 
       return answer
@@ -148,7 +384,10 @@ class PeerConnection {
   }
 
   /**
-   * Set remote description (answer/offer from peer)
+   * Set remote description (for receiving offer/answer)
+   *
+   * @param {string} peerId - Peer identifier
+   * @param {Object} description - SDP description
    */
   async setRemoteDescription(peerId, description) {
     try {
@@ -163,10 +402,49 @@ class PeerConnection {
       })
 
       await peerConnection.setRemoteDescription(desc)
+
+      // Add any pending ICE candidates
+      const pending = this.pendingCandidates.get(peerId) || []
+      for (const candidate of pending) {
+        try {
+          await peerConnection.addIceCandidate(candidate)
+        } catch (error) {
+          console.warn('[PeerConnection] Failed to add pending ICE candidate:', error)
+        }
+      }
+      this.pendingCandidates.set(peerId, [])
+
       console.log('[PeerConnection] Set remote description for:', peerId)
     } catch (error) {
       console.error('[PeerConnection] Failed to set remote description:', error)
       throw error
+    }
+  }
+
+  /**
+   * Add ICE candidate
+   *
+   * @param {string} peerId - Peer identifier
+   * @param {Object} candidate - ICE candidate
+   */
+  async addIceCandidate(peerId, candidate) {
+    try {
+      const peerConnection = this.peerConnections.get(peerId)
+      if (!peerConnection) {
+        // Store candidate for later if connection not yet created
+        if (!this.pendingCandidates.has(peerId)) {
+          this.pendingCandidates.set(peerId, [])
+        }
+        this.pendingCandidates.get(peerId).push(candidate)
+        return
+      }
+
+      const iceCandidate = new RTCIceCandidate(candidate)
+      await peerConnection.addIceCandidate(iceCandidate)
+
+      console.log('[PeerConnection] Added ICE candidate for:', peerId)
+    } catch (error) {
+      console.warn('[PeerConnection] Failed to add ICE candidate:', error)
     }
   }
 
@@ -186,7 +464,8 @@ class PeerConnection {
     return {
       connectionState: pc.connectionState,
       iceConnectionState: pc.iceConnectionState,
-      signalingState: pc.signalingState
+      signalingState: pc.signalingState,
+      iceGatheringState: pc.iceGatheringState
     }
   }
 
@@ -198,6 +477,7 @@ class PeerConnection {
     if (peerConnection) {
       peerConnection.close()
       this.peerConnections.delete(peerId)
+      this.pendingCandidates.delete(peerId)
       console.log('[PeerConnection] Closed peer connection for:', peerId)
     }
   }
@@ -210,12 +490,77 @@ class PeerConnection {
       pc.close()
     }
     this.peerConnections.clear()
+    this.pendingCandidates.clear()
     this.stopMediaStream()
     console.log('[PeerConnection] Closed all peer connections')
   }
 
   /**
-   * Event emitter
+   * Get connection statistics
+   */
+  async getStats(peerId) {
+    const peerConnection = this.peerConnections.get(peerId)
+    if (!peerConnection) return null
+
+    try {
+      const stats = await peerConnection.getStats()
+      const report = {
+        audio: {},
+        video: {},
+        connection: {}
+      }
+
+      stats.forEach(stat => {
+        if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+          report.audio.inbound = {
+            bytesReceived: stat.bytesReceived,
+            packetsReceived: stat.packetsReceived,
+            packetsLost: stat.packetsLost,
+            jitter: stat.jitter,
+            audioLevel: stat.audioLevel
+          }
+        }
+        if (stat.type === 'outbound-rtp' && stat.kind === 'audio') {
+          report.audio.outbound = {
+            bytesSent: stat.bytesSent,
+            packetsSent: stat.packetsSent,
+            audioLevel: stat.audioLevel
+          }
+        }
+        if (stat.type === 'inbound-rtp' && stat.kind === 'video') {
+          report.video.inbound = {
+            bytesReceived: stat.bytesReceived,
+            packetsReceived: stat.packetsReceived,
+            packetsLost: stat.packetsLost,
+            frameDecodedRate: stat.framesDecoded,
+            jitter: stat.jitter
+          }
+        }
+        if (stat.type === 'outbound-rtp' && stat.kind === 'video') {
+          report.video.outbound = {
+            bytesSent: stat.bytesSent,
+            packetsSent: stat.packetsSent,
+            frameEncodedRate: stat.framesEncoded
+          }
+        }
+        if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
+          report.connection = {
+            currentRoundTripTime: stat.currentRoundTripTime,
+            availableOutgoingBitrate: stat.availableOutgoingBitrate,
+            availableIncomingBitrate: stat.availableIncomingBitrate
+          }
+        }
+      })
+
+      return report
+    } catch (error) {
+      console.error('[PeerConnection] Failed to get stats:', error)
+      return null
+    }
+  }
+
+  /**
+   * Event emitter methods
    */
   on(eventName, callback) {
     if (!this.listeners.has(eventName)) {
@@ -253,7 +598,7 @@ if (typeof window !== 'undefined') {
   window.PeerConnection = PeerConnection
 }
 
-// Export for modules
+// Export for Node.js/modules
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = PeerConnection
 }
