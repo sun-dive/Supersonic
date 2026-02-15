@@ -2270,6 +2270,7 @@
                     // Encode response as binary format (byte-efficient)
                     const responseStateHex = this.encodeCallState(responseData)
                     console.debug(`[SEND] Response encoded to ${responseStateHex.length / 2} bytes`)
+                    console.debug(`[SEND] Response state hex (first 100):`, responseStateHex.substring(0, 100))
 
                     // Extract caller's connection data from token attributes for P2P
                     // Use signaling parser which handles both binary v1 and legacy JSON formats
@@ -2283,12 +2284,14 @@
                             if (callerAddress) {
                                 this.log(`📤 Sending token back to caller ${callerAddress}...`, 'info')
                                 console.debug(`[SEND] Response data:`, responseData)
+                                console.debug(`[SEND] About to transfer token with stateData:`, { tokenId: this.currentCallToken.slice(0,20), address: callerAddress, stateDataLen: responseStateHex.length / 2 })
                                 // Transfer the token back to caller with response data in stateData
                                 const transferResult = await tokenBuilder.createTransfer(
                                     this.currentCallToken,
                                     callerAddress,
                                     responseStateHex  // Pass recipient's connection data as stateData
                                 )
+                                console.debug(`[SEND] Transfer completed, stateData was included in transfer`)
                                 this.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
                                 console.debug(`[SEND] ✅ Response token transferred: ${transferResult.txId}`)
                             }
