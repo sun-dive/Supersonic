@@ -22,6 +22,7 @@ class CallManager {
     this.peerConnection.on('peer:connected', (data) => this.onPeerConnected(data))
     this.peerConnection.on('peer:connection-failed', (data) => this.onPeerConnectionFailed(data))
     this.peerConnection.on('media:track-received', (data) => this.onRemoteTrackReceived(data))
+    this.peerConnection.on('media:ready', (data) => this.onMediaReady(data))
   }
 
   /**
@@ -258,10 +259,11 @@ class CallManager {
   onPeerConnected(data) {
     // Find session by peer ID
     let session = null
+    let peerId = null
     for (const [callTokenId, sess] of this.activeCallSessions) {
       const callToken = this.signaling.getCallToken(callTokenId)
       if (callToken) {
-        const peerId = sess.role === 'caller' ? callToken.callee : callToken.caller
+        peerId = sess.role === 'caller' ? callToken.callee : callToken.caller
         if (peerId === data.peerId) {
           session = sess
           break
@@ -275,6 +277,12 @@ class CallManager {
 
       // Start collecting statistics
       this.startStatsMonitoring(session.callTokenId)
+
+      // Show Active Call Panel if available
+      if (typeof app !== 'undefined' && app.showActiveCallPanel) {
+        app.currentPeerId = peerId
+        app.showActiveCallPanel(peerId)
+      }
 
       this.emit('call:connected', {
         callTokenId: session.callTokenId,
@@ -291,7 +299,30 @@ class CallManager {
    */
   onPeerConnectionFailed(data) {
     console.error('[CallManager] Peer connection failed:', data.peerId)
+
+    // Hide Active Call Panel if available
+    if (typeof app !== 'undefined' && app.hideActiveCallPanel) {
+      app.hideActiveCallPanel()
+    }
+
     this.emit('call:connection-failed', data)
+  }
+
+  /**
+   * Handle media stream ready (local media initialized)
+   * @private
+   */
+  onMediaReady(data) {
+    console.log('[CallManager] Local media stream ready')
+    // Attach local video to Active Call Panel if available
+    if (typeof app !== 'undefined' && data.mediaStream) {
+      const localVideo = document.getElementById('localVideo')
+      if (localVideo) {
+        localVideo.srcObject = data.mediaStream
+        console.log('[CallManager] Local video attached to call panel')
+      }
+    }
+    this.emit('media:local-ready', data)
   }
 
   /**
@@ -301,6 +332,15 @@ class CallManager {
   onRemoteTrackReceived(data) {
     this.emit('media:remote-track', data)
     console.log('[CallManager] Received remote', data.track.kind, 'track')
+
+    // Attach remote video to Active Call Panel if available
+    if (typeof app !== 'undefined' && data.stream) {
+      const remoteVideo = document.getElementById('remoteVideo')
+      if (remoteVideo) {
+        remoteVideo.srcObject = data.stream
+        console.log('[CallManager] Remote video attached to call panel')
+      }
+    }
   }
 
   /**
