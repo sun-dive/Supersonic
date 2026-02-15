@@ -986,7 +986,10 @@
                 <button class="btn-primary" id="initiateCallBtn" onclick="app.initializeCall()">☎️ Make a Call</button>
                 <button class="btn-primary" onclick="app.toggleMediaStream()" id="mediaBtn">🎤 Start Media</button>
 
-                <button class="btn-success" onclick="app.mintSingleToken()">🔧 Mint Token</button>
+                <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px;">
+                    <input type="number" id="tokenCount" value="100" min="1" style="width: 80px; padding: 8px 12px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; background: rgba(30, 60, 114, 0.6); color: #fff;">
+                    <button class="btn-success" onclick="app.mintTokens()">🔧 Mint Tokens</button>
+                </div>
 
                 <div class="form-group">
                     <label for="calleeAddress">CALL BSV Address</label>
@@ -1598,15 +1601,17 @@
                 }
             }
 
-            async mintSingleToken() {
+            async mintTokens() {
                 const recipientAddr = document.getElementById('calleeAddress').value
                 if (!recipientAddr) {
                     this.log('Enter a recipient address first', 'warning')
                     return
                 }
 
+                const count = parseInt(document.getElementById('tokenCount').value) || 1
+
                 try {
-                    this.log('🔧 Minting token...', 'info')
+                    this.log(`🔧 Minting ${count} token(s)...`, 'info')
 
                     const dummyCallToken = {
                         caller: this.signaling.myAddress,
@@ -1622,14 +1627,14 @@
                     const result = await tokenBuilder.createGenesis({
                         tokenName: `CALL-${dummyCallToken.caller.slice(0, 5)}`,
                         attributes: this.encodeCallAttributes(dummyCallToken),
-                        supply: 1,
+                        supply: count,
                         divisibility: 0,
                         restrictions: 0,
                         stateData: ''
                     })
 
-                    this.log(`✓ Token minted! TX: ${result.txId.slice(0, 16)}...`, 'success')
-                    console.debug(`[MINT] Token created:`, result)
+                    this.log(`✓ ${count} token(s) minted! TX: ${result.txId.slice(0, 16)}...`, 'success')
+                    console.debug(`[MINT] Tokens created:`, result)
                 } catch (error) {
                     this.log(`❌ Mint failed: ${error.message}`, 'error')
                     console.error(`[MINT] Error:`, error)
