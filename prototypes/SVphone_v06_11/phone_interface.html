@@ -1576,6 +1576,12 @@
                     // Check each call token's attributes to see if it's for this recipient
                     for (const token of callTokens) {
                         try {
+                            // VALIDATE: tokenId must be 64 hex characters (not corrupted from JSON parsing)
+                            if (!token.tokenId || !/^[0-9a-f]{64}$/.test(token.tokenId)) {
+                                console.debug(`[REUSE] Skipping token with invalid ID (likely corrupted JSON token): ${token.tokenId?.substring(0, 16)}...`)
+                                continue
+                            }
+
                             // Parse token attributes to get callee
                             if (token.tokenAttributes && this.signaling) {
                                 const attrs = this.signaling.parseTokenAttributes(token.tokenAttributes)
