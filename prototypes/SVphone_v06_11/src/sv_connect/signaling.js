@@ -153,14 +153,16 @@ class CallSignaling {
       const version = bytes[0]
 
       if (version === 0x01) {
-        // Binary format v1
+        // Binary format v1 - only supported format
         return this.decodeBinaryAttributes(bytes)
       } else {
-        // Legacy JSON format (backward compatibility)
-        return this.decodeLegacyJsonAttributes(tokenAttributesHex)
+        // No JSON support - only binary format
+        console.error(`[CallSignaling] Invalid token attributes version: 0x${version.toString(16).padStart(2, '0')}. Expected binary format v1 (0x01). First 4 bytes: ${tokenAttributesHex.substring(0, 8)}`)
+        return {}
       }
     } catch (error) {
       console.error('[CallSignaling] Failed to parse tokenAttributes:', error)
+      console.error('[CallSignaling] Token attributes hex (first 100 chars):', tokenAttributesHex?.substring(0, 100))
       return {}
     }
   }
@@ -229,23 +231,6 @@ class CallSignaling {
     }
   }
 
-  /**
-   * Decode legacy JSON format (backward compatibility)
-   * @private
-   */
-  decodeLegacyJsonAttributes(tokenAttributesHex) {
-    try {
-      let attributesJson = ''
-      for (let i = 0; i < tokenAttributesHex.length; i += 2) {
-        const hex = tokenAttributesHex.substr(i, 2)
-        attributesJson += String.fromCharCode(parseInt(hex, 16))
-      }
-      return JSON.parse(attributesJson)
-    } catch (error) {
-      console.error('[CallSignaling] Failed to decode legacy JSON:', error)
-      return {}
-    }
-  }
 
   /**
    * Helper: Convert IPv6 string to 16-byte array
