@@ -2000,7 +2000,8 @@
                         const session = await this.callManager.initiateCall(calleeAddress, {
                             audio: true,
                             video: true,
-                            quality: quality
+                            quality: quality,
+                            reusableTokenId: reusableToken.tokenId  // Pass token ID for transfer
                             // No mintTokenFn = use existing token, no confirmation wait
                         })
 

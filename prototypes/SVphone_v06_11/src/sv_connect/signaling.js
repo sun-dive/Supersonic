@@ -340,9 +340,10 @@ class CallSignaling {
    * @param {Object} callToken - Call token to broadcast
    * @param {Function} mintTokenFn - Function to mint token (optional): (token) => Promise<{txId, tokenId}>
    *                                 If not provided, uses first existing call token
+   * @param {string} reusableTokenId - Token ID of existing token to reuse (optional)
    * @returns {Object} {txId, tokenId, callTokenId}
    */
-  async broadcastCallToken(callToken, mintTokenFn) {
+  async broadcastCallToken(callToken, mintTokenFn, reusableTokenId) {
     try {
       let result
 
@@ -351,15 +352,18 @@ class CallSignaling {
         result = await mintTokenFn(callToken)
       } else {
         // Use existing token - must transfer it to recipient
-        // Note: This assumes tokenBuilder is available globally or passed in constructor
+        if (!reusableTokenId) {
+          throw new Error('No reusableTokenId provided for token transfer')
+        }
         if (typeof window !== 'undefined' && window.tokenBuilder) {
           console.debug('[CallSignaling] 📤 Transferring reusable token to recipient:', callToken.callee)
+          console.debug('[CallSignaling]   Token ID: ' + reusableTokenId.slice(0, 20) + '...')
           const transferResult = await window.tokenBuilder.createTransfer(
-            callToken.callTokenId,
+            reusableTokenId,
             callToken.callee
           )
           result = {
-            tokenId: callToken.callTokenId,
+            tokenId: reusableTokenId,
             txId: transferResult.txId
           }
           console.debug('[CallSignaling] ✅ Reusable token transferred:', {
