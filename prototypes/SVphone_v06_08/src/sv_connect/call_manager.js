@@ -211,10 +211,28 @@ class CallManager {
    * Handle call answered event
    * @private
    */
-  onCallAnswered(data) {
+  async onCallAnswered(data) {
     const session = this.activeCallSessions.get(data.callTokenId)
     if (session) {
       session.status = 'answered'
+
+      // If we have the callee's SDP answer, apply it to the peer connection
+      if (data.sdpAnswer && session.peerId) {
+        try {
+          console.debug('[CallManager] Setting remote description with SDP answer from callee')
+          const answer = new RTCSessionDescription({
+            type: 'answer',
+            sdp: data.sdpAnswer
+          })
+          await this.peerConnection.setRemoteDescription(session.peerId, answer)
+          console.log('[CallManager] ✅ Remote description set - ICE candidate exchange can begin')
+        } catch (error) {
+          console.error('[CallManager] Failed to set remote description:', error)
+          this.emit('call:failed', { callTokenId: data.callTokenId, reason: 'Failed to apply remote description' })
+          return
+        }
+      }
+
       this.emit('call:answered-session', data)
       console.log('[CallManager] Call answered')
     }

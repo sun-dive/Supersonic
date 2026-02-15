@@ -635,7 +635,7 @@ class CallSignaling {
 
     console.debug('[CallSignaling] ✓ Status is "answered", emitting call:answered event...')
 
-    // Emit call:answered event with callee's connection data
+    // Emit call:answered event with callee's connection data AND SDP answer
     const eventData = {
       callTokenId: token.tokenId,
       callee: responseData.recipientAddress,
@@ -643,13 +643,15 @@ class CallSignaling {
       calleePort: responseData.recipientPort,
       calleeSessionKey: responseData.recipientSessionKey,
       audioOnly: responseData.audioOnly || false,
+      sdpAnswer: responseData.sdpAnswer,  // Include SDP answer if present
       timestamp: Date.now()
     }
     console.debug('[CallSignaling] Emitting event with data:', {
       callTokenId: eventData.callTokenId?.slice(0,20),
       callee: eventData.callee?.slice(0,20),
       calleeIp: eventData.calleeIp,
-      calleePort: eventData.calleePort
+      calleePort: eventData.calleePort,
+      hasSdpAnswer: !!eventData.sdpAnswer
     })
 
     this.emit('call:answered', eventData)

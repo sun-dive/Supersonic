@@ -2253,15 +2253,23 @@
                         recipientSessionKey: recipientSessionKey,
                         answeredAt: Date.now()
                     }
-                    // Encode response as binary format (byte-efficient)
-                    const responseStateHex = this.encodeCallState(responseData)
-                    console.debug(`[SEND] Response encoded to ${responseStateHex.length / 2} bytes`)
 
-                    // Call manager accepts the call
-                    await this.callManager.acceptCall(this.currentCallToken, {
+                    // Call manager accepts the call (FIRST - this creates the SDP answer)
+                    const acceptedSession = await this.callManager.acceptCall(this.currentCallToken, {
                         audio: true,
                         video: true
                     })
+                    console.debug(`[SEND] Call accepted, session:`, acceptedSession)
+
+                    // Get the SDP answer that was created
+                    if (acceptedSession?.mediaAnswer) {
+                        responseData.sdpAnswer = acceptedSession.mediaAnswer.sdp || JSON.stringify(acceptedSession.mediaAnswer)
+                        console.debug(`[SEND] Encoding SDP answer (${responseData.sdpAnswer?.length || 0} chars)`)
+                    }
+
+                    // Encode response as binary format (byte-efficient)
+                    const responseStateHex = this.encodeCallState(responseData)
+                    console.debug(`[SEND] Response encoded to ${responseStateHex.length / 2} bytes`)
 
                     // Extract caller's connection data from token attributes for P2P
                     // Use signaling parser which handles both binary v1 and legacy JSON formats
@@ -2318,6 +2326,12 @@
                             const recipientPort = parseInt(document.getElementById('myPort').value)
 
                             if (recipientAddress && recipientIp && recipientPort) {
+                                // Accept call FIRST (creates SDP answer)
+                                const audioSession = await this.callManager.acceptCall(this.currentCallToken, {
+                                    audio: true,
+                                    video: false
+                                })
+
                                 // Prepare recipient's response data for audio-only call
                                 const keyBytes = new Uint8Array(32)
                                 crypto.getRandomValues(keyBytes)
@@ -2331,15 +2345,16 @@
                                     answeredAt: Date.now(),
                                     audioOnly: true
                                 }
+
+                                // Include SDP answer from session
+                                if (audioSession?.mediaAnswer) {
+                                    responseData.sdpAnswer = audioSession.mediaAnswer.sdp || JSON.stringify(audioSession.mediaAnswer)
+                                }
+
                                 const responseJson = JSON.stringify(responseData)
                                 const responseStateHex = Array.from(new TextEncoder().encode(responseJson))
                                     .map(b => b.toString(16).padStart(2, '0'))
                                     .join('')
-
-                                await this.callManager.acceptCall(this.currentCallToken, {
-                                    audio: true,
-                                    video: false
-                                })
 
                                 // Send the token back to the caller
                                 const tokenBuilder = window.tokenBuilder
