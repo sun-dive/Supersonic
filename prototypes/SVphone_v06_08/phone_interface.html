@@ -2146,6 +2146,7 @@
                 // Encode call state as hex string for stateData field
                 // Binary format: [Version(1)] [Status(1)] [RecipientAddressLen(1)] [RecipientAddress(var)]
                 //               [IPType+IP(4-16)] [Port(2)] [KeyLen(1)] [Key(var)]
+                //               [SdpAnswerLen(2)] [SdpAnswer(var)] (OPTIONAL - only if present)
                 try {
                     const bytes = []
 
@@ -2201,6 +2202,22 @@
                         : keyData
                     bytes.push(keyBuf.length)
                     bytes.push(...keyBuf)
+
+                    // SDP answer (OPTIONAL - variable-length with 2-byte length prefix)
+                    if (state.sdpAnswer) {
+                        const sdpBuf = new TextEncoder().encode(state.sdpAnswer)
+                        const sdpLen = sdpBuf.length
+                        // 2-byte big-endian length
+                        bytes.push((sdpLen >> 8) & 0xFF)
+                        bytes.push(sdpLen & 0xFF)
+                        bytes.push(...sdpBuf)
+                        console.debug(`[SEND] Encoded SDP answer: ${sdpLen} bytes`)
+                    } else {
+                        // No SDP answer - send 0x0000 to indicate none
+                        bytes.push(0x00)
+                        bytes.push(0x00)
+                        console.debug(`[SEND] No SDP answer to encode`)
+                    }
 
                     // Convert to hex string
                     return bytes.map(b => ('0' + b.toString(16)).slice(-2)).join('')

@@ -613,13 +613,27 @@ class CallSignaling {
         const keyLen = bytes[offset++]
         const keyBytes = bytes.slice(offset, offset + keyLen)
         responseData.recipientSessionKey = String.fromCharCode(...keyBytes)
+        offset += keyLen
+
+        // SDP answer (OPTIONAL - 2-byte length prefix + variable data)
+        if (offset < bytes.length) {
+          const sdpLen = (bytes[offset++] << 8) | bytes[offset++]
+          if (sdpLen > 0 && offset + sdpLen <= bytes.length) {
+            const sdpBytes = bytes.slice(offset, offset + sdpLen)
+            responseData.sdpAnswer = String.fromCharCode(...sdpBytes)
+            console.debug('[CallSignaling] ✓ Extracted SDP answer:', sdpLen, 'bytes')
+          } else if (sdpLen === 0) {
+            console.debug('[CallSignaling] ✓ No SDP answer in token')
+          }
+        }
 
         console.debug('[CallSignaling] ✓ Parsed response data:',  {
           status: responseData.status,
           recipientAddress: responseData.recipientAddress?.slice(0,20),
           recipientIp: responseData.recipientIp,
           recipientPort: responseData.recipientPort,
-          hasKey: !!responseData.recipientSessionKey
+          hasKey: !!responseData.recipientSessionKey,
+          hasSdpAnswer: !!responseData.sdpAnswer
         })
       } catch (err) {
         console.warn('[CallSignaling] Failed to parse response stateData:', err.message)
