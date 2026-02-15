@@ -2299,12 +2299,21 @@
                     }
 
                     // Encode response as binary format (byte-efficient)
-                    const responseStateHex = this.encodeCallState(responseData)
-                    console.debug(`[SEND] ✅ Response encoded to ${responseStateHex.length / 2} bytes`)
-                    console.debug(`[SEND] Response state hex (full):`, responseStateHex)
-                    console.debug(`[SEND] Response state hex (first 100):`, responseStateHex.substring(0, 100))
-                    if (!responseStateHex || responseStateHex.length === 0) {
-                        console.error(`[SEND] ❌ ERROR: Response state hex is EMPTY!`)
+                    let responseStateHex = ''
+                    try {
+                        responseStateHex = this.encodeCallState(responseData)
+                        console.debug(`[SEND] ✅ Response encoded to ${responseStateHex.length / 2} bytes`)
+                        console.debug(`[SEND] Response state hex (full):`, responseStateHex)
+                        console.debug(`[SEND] Response state hex (first 100):`, responseStateHex.substring(0, 100))
+                        if (!responseStateHex || responseStateHex.length === 0) {
+                            console.error(`[SEND] ❌ ERROR: Response state hex is EMPTY!`)
+                            this.log(`❌ Error: Could not encode response (empty state data)`, 'error')
+                        }
+                    } catch (encodeError) {
+                        console.error(`[SEND] ❌ ERROR encoding response state:`, encodeError)
+                        this.log(`❌ Error encoding response data: ${encodeError.message}`, 'error')
+                        // Continue anyway - try to send token without stateData
+                        responseStateHex = ''
                     }
 
                     // Extract caller's connection data from token attributes for P2P
@@ -2319,21 +2328,45 @@
                             if (callerAddress) {
                                 this.log(`📤 Sending token back to caller ${callerAddress}...`, 'info')
                                 console.debug(`[SEND] Response data:`, responseData)
-                                console.debug(`[SEND] About to transfer token with stateData:`, { tokenId: this.currentCallToken.slice(0,20), address: callerAddress, stateDataLen: responseStateHex.length / 2, stateData: responseStateHex })
+                                console.debug(`[SEND] About to transfer token with stateData:`, {
+                                    tokenId: this.currentCallToken?.slice(0,20),
+                                    address: callerAddress?.slice(0,20),
+                                    stateDataLen: responseStateHex?.length ? responseStateHex.length / 2 : 0,
+                                    stateDataEmpty: !responseStateHex || responseStateHex.length === 0,
+                                    stateData: responseStateHex?.substring(0, 100) || '(empty)'
+                                })
+
                                 // Transfer the token back to caller with response data in stateData
+                                console.debug(`[SEND] Calling createTransfer with:`, {
+                                    tokenId: this.currentCallToken,
+                                    callerAddress: callerAddress,
+                                    responseStateHex: responseStateHex ? 'provided' : 'NOT PROVIDED',
+                                    responseStateHexLen: responseStateHex?.length || 0
+                                })
+
                                 const transferResult = await tokenBuilder.createTransfer(
                                     this.currentCallToken,
                                     callerAddress,
                                     responseStateHex  // Pass recipient's connection data as stateData
                                 )
-                                console.debug(`[SEND] ✅ Transfer completed, stateData parameter was:`, { stateDataLen: responseStateHex.length / 2, stateData: responseStateHex.substring(0, 100) })
+                                console.debug(`[SEND] ✅ Transfer completed, stateData parameter was:`, {
+                                    stateDataLen: responseStateHex?.length ? responseStateHex.length / 2 : 0,
+                                    stateData: responseStateHex?.substring(0, 100) || '(empty)'
+                                })
                                 this.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
                                 console.debug(`[SEND] ✅ Response token transferred: ${transferResult.txId}`)
+                            } else {
+                                console.error(`[SEND] ❌ ERROR: No caller address found!`)
+                                this.log(`❌ Error: Could not determine caller address`, 'error')
                             }
                         } catch (transferError) {
+                            console.error(`[SEND] ❌ Transfer error:`, transferError)
                             this.log(`⚠️  Could not send token back: ${transferError.message}`, 'warning')
                             // Don't fail the acceptance if transfer fails - local acceptance is still valid
                         }
+                    } else {
+                        console.error(`[SEND] ❌ tokenBuilder not available!`)
+                        this.log(`❌ Error: Token builder not initialized`, 'error')
                     }
 
                     // Initiate P2P connection to caller using their connection data
