@@ -548,7 +548,14 @@ class CallSignaling {
     console.debug('[CallSignaling] 🔄 Processing call response token')
     console.debug('[CallSignaling] Token ID:', token.tokenId?.slice(0,20))
     console.debug('[CallSignaling] StateData length:', token.stateData?.length || 0)
+    console.debug('[CallSignaling] StateData (full):', token.stateData)
+    console.debug('[CallSignaling] StateData (first 200 chars):', token.stateData?.substring(0, 200) || '(empty)')
     console.debug('[CallSignaling] Full token object:', { tokenId: token.tokenId?.slice(0,20), stateData: token.stateData?.substring(0,100), tokenAttributes: token.tokenAttributes?.substring(0,50) })
+
+    if (!token.stateData || token.stateData.length === 0) {
+      console.error('[CallSignaling] ❌ ERROR: Response token has NO stateData!')
+      return
+    }
 
     // Parse stateData to extract callee's connection information (binary format)
     let responseData = {}
