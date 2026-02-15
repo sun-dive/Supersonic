@@ -986,15 +986,7 @@
                 <button class="btn-primary" id="initiateCallBtn" onclick="app.initializeCall()">☎️ Make a Call</button>
                 <button class="btn-primary" onclick="app.toggleMediaStream()" id="mediaBtn">🎤 Start Media</button>
 
-                <!-- Batch Token Minting -->
-                <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
-                    <label for="tokenCount">Pre-mint Tokens for Testing</label>
-                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-                        <input type="number" id="tokenCount" placeholder="How many tokens?" min="1" max="10" value="3" style="flex: 1; padding: 8px 12px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; background: rgba(30, 60, 114, 0.6); color: #fff;">
-                        <button class="btn-success" onclick="app.batchMintTokens()" style="white-space: nowrap;">🔧 Mint Pool</button>
-                    </div>
-                    <div id="mintStatus" style="font-size: 0.85em; color: #8b949e; display: none;"></div>
-                </div>
+                <button class="btn-success" onclick="app.mintSingleToken()">🔧 Mint Token</button>
 
                 <div class="form-group">
                     <label for="calleeAddress">CALL BSV Address</label>
@@ -1606,76 +1598,41 @@
                 }
             }
 
-            async batchMintTokens() {
-                const countInput = document.getElementById('tokenCount')
-                const statusDiv = document.getElementById('mintStatus')
-                const count = parseInt(countInput.value) || 1
-
-                if (count < 1 || count > 10) {
-                    this.log('Please mint between 1 and 10 tokens', 'warning')
+            async mintSingleToken() {
+                const recipientAddr = document.getElementById('calleeAddress').value
+                if (!recipientAddr) {
+                    this.log('Enter a recipient address first', 'warning')
                     return
                 }
 
                 try {
-                    statusDiv.style.display = 'block'
-                    statusDiv.innerHTML = `⏳ Minting ${count} tokens...`
+                    this.log('🔧 Minting token...', 'info')
 
-                    const callTokenCreateFn = async (callToken) => {
-                        return await tokenBuilder.createGenesis({
-                            tokenName: `CALL-${callToken.caller.slice(0, 5)}`,
-                            attributes: this.encodeCallAttributes(callToken),
-                            supply: 1,
-                            divisibility: 0,
-                            restrictions: 0,
-                            stateData: ''
-                        })
+                    const dummyCallToken = {
+                        caller: this.signaling.myAddress,
+                        callee: recipientAddr,
+                        senderIp: this.signaling.myIp,
+                        senderPort: this.signaling.myPort,
+                        sessionKey: this.signaling.generateSessionKey?.() || btoa(String.fromCharCode(...new Uint8Array(32).map(() => Math.random() * 256))),
+                        codec: 'opus',
+                        quality: 'hd',
+                        mediaTypes: ['audio', 'video']
                     }
 
-                    let successCount = 0
-                    for (let i = 0; i < count; i++) {
-                        try {
-                            statusDiv.innerHTML = `⏳ Minting token ${i + 1}/${count}...`
+                    const result = await tokenBuilder.createGenesis({
+                        tokenName: `CALL-${dummyCallToken.caller.slice(0, 5)}`,
+                        attributes: this.encodeCallAttributes(dummyCallToken),
+                        supply: 1,
+                        divisibility: 0,
+                        restrictions: 0,
+                        stateData: ''
+                    })
 
-                            // Create a dummy call token for the recipient we're about to call
-                            const recipientAddr = document.getElementById('calleeAddress').value
-                            if (!recipientAddr) {
-                                throw new Error('Enter a recipient address first')
-                            }
-
-                            const dummyCallToken = {
-                                caller: this.signaling.myAddress,
-                                callee: recipientAddr,
-                                senderIp: this.signaling.myIp,
-                                senderPort: this.signaling.myPort,
-                                sessionKey: this.signaling.generateSessionKey?.() || btoa(String.fromCharCode(...new Uint8Array(32).map(() => Math.random() * 256))),
-                                codec: 'opus',
-                                quality: 'hd',
-                                mediaTypes: ['audio', 'video']
-                            }
-
-                            const result = await callTokenCreateFn(dummyCallToken)
-
-                            statusDiv.innerHTML = `✅ Token ${i + 1}/${count} minted: ${result.txId.slice(0, 12)}...`
-                            successCount++
-
-                            // Add small delay between mints
-                            await new Promise(r => setTimeout(r, 500))
-                        } catch (err) {
-                            console.error(`[MINT] Token ${i + 1} failed:`, err)
-                            statusDiv.innerHTML += `<br>❌ Token ${i + 1} failed: ${err.message}`
-                        }
-                    }
-
-                    this.log(`✓ Batch mint complete: ${successCount}/${count} tokens created`, 'success')
-                    statusDiv.innerHTML = `✓ ${successCount}/${count} tokens minted. Ready for testing!`
-                    statusDiv.style.color = '#28a745'
-
-                    // Clear input for next batch
-                    setTimeout(() => countInput.value = '3', 1000)
+                    this.log(`✓ Token minted! TX: ${result.txId.slice(0, 16)}...`, 'success')
+                    console.debug(`[MINT] Token created:`, result)
                 } catch (error) {
-                    this.log(`❌ Batch mint failed: ${error.message}`, 'error')
-                    statusDiv.innerHTML = `❌ Error: ${error.message}`
-                    statusDiv.style.color = '#dc3545'
+                    this.log(`❌ Mint failed: ${error.message}`, 'error')
+                    console.error(`[MINT] Error:`, error)
                 }
             }
 
