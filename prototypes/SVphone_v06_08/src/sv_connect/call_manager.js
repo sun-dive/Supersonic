@@ -53,7 +53,19 @@ class CallManager {
         mediaTypes: options.mediaTypes || ['audio', 'video']
       })
 
-      // Broadcast to blockchain
+      // **IMPORTANT: Create WebRTC offer BEFORE broadcasting the token**
+      // This ensures the callee can retrieve the offer when accepting the call
+      let mediaOffer = null
+      try {
+        console.debug('[CallManager] Creating SDP offer before token broadcast...')
+        mediaOffer = await this.peerConnection.createOffer(calleeAddress)
+        callToken.mediaOffer = mediaOffer  // Store offer in call token for callee to retrieve
+        console.debug('[CallManager] ✓ SDP offer created and stored in callToken')
+      } catch (error) {
+        console.warn('[CallManager] Failed to create media offer before broadcast:', error)
+      }
+
+      // Broadcast to blockchain (now includes mediaOffer if successful)
       const broadcastResult = await this.signaling.broadcastCallToken(
         callToken,
         options.mintTokenFn
@@ -68,21 +80,13 @@ class CallManager {
         status: 'initiating', // initiating → ringing → connecting → connected → ended
         createdAt: Date.now(),
         sessionKey: sessionKey,
-        mediaOffer: null,
+        mediaOffer: mediaOffer,  // Store in session as well
         mediaAnswer: null,
         iceCandidates: [],
         stats: {}
       }
 
       this.activeCallSessions.set(broadcastResult.callTokenId, session)
-
-      // Create WebRTC offer
-      try {
-        const offer = await this.peerConnection.createOffer(calleeAddress)
-        session.mediaOffer = offer
-      } catch (error) {
-        console.warn('[CallManager] Failed to create media offer:', error)
-      }
 
       this.emit('call:initiated-session', session)
       console.log('[CallManager] Initiated call to:', calleeAddress)

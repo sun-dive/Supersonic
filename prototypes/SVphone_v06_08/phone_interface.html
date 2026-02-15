@@ -1893,16 +1893,28 @@
                     this.signaling.on('call:answered', (data) => {
                         console.debug(`[SEND] ✅ call:answered event received:`, data)
                         this.log(`[SEND] 🔔 Call answered! Recipient accepted the call`, 'success')
-                        console.debug(`[SEND] Call answered event data:`, data)
+                        console.debug(`[SEND] Call answered event data:`, {
+                            callTokenId: data.callTokenId?.slice(0,20),
+                            callee: data.callee?.slice(0,20),
+                            calleeIp: data.calleeIp,
+                            calleePort: data.calleePort,
+                            hasSdpAnswer: !!data.sdpAnswer
+                        })
 
                         // Recipient's connection info is in the event data
                         if (data.calleeIp && data.calleePort) {
                             this.log(`📍 Connecting to recipient at ${data.calleeIp}:${data.calleePort}`, 'info')
-                            // Initiate P2P connection to the callee
-                            this.initiateP2PConnection(data.callTokenId, data.callee, data.calleeIp, data.calleePort)
+                            // Initiate P2P connection to the callee with their SDP answer if available
+                            this.initiateP2PConnection(
+                                data.callTokenId,
+                                data.callee,
+                                data.calleeIp,
+                                data.calleePort,
+                                data.sdpAnswer  // Pass the SDP answer from callee
+                            )
                         } else {
-                            console.warn(`[SEND] Missing callee connection info:`, data)
-                            this.log(`⚠️ Missing callee connection info`, 'warning')
+                            console.error(`[SEND] ❌ Missing callee connection info:`, data)
+                            this.log(`❌ Missing callee connection info (IP or port)`, 'error')
                         }
                     })
                 } catch (error) {
@@ -2461,17 +2473,43 @@
                 }
             }
 
-            async initiateP2PConnection(callTokenId, remoteAddress, remoteIp, remotePort) {
+            async initiateP2PConnection(callTokenId, remoteAddress, remoteIp, remotePort, remoteSdpAnswer = null) {
                 try {
                     console.debug(`[P2P] 🔗 Initiating direct P2P connection to ${remoteAddress}`)
                     console.debug(`[P2P] Remote endpoint: ${remoteIp}:${remotePort}`)
+                    console.debug(`[P2P] Has remote SDP answer: ${!!remoteSdpAnswer}`)
 
-                    this.log(`🔗 Establishing P2P connection to ${remoteAddress}...`, 'info')
+                    if (!remoteAddress || !remoteIp || !remotePort) {
+                        console.error(`[P2P] ❌ Missing required connection data:`, { remoteAddress, remoteIp, remotePort })
+                        this.log(`❌ Missing connection coordinates (address, IP, or port)`, 'error')
+                        return
+                    }
+
+                    this.log(`🔗 Establishing P2P connection to ${remoteAddress}@${remoteIp}:${remotePort}...`, 'info')
 
                     // Create peer connection for direct P2P
                     const peerConnection = this.peerConnection.createPeerConnection(remoteAddress)
 
                     console.debug(`[P2P] ✓ Peer connection created for ${remoteAddress}`)
+
+                    // If we have the remote SDP answer, apply it now
+                    // This represents the callee's response to our SDP offer
+                    if (remoteSdpAnswer) {
+                        try {
+                            console.debug(`[P2P] Setting remote description (SDP answer) from callee...`)
+                            const answer = new RTCSessionDescription({
+                                type: 'answer',
+                                sdp: remoteSdpAnswer
+                            })
+                            await peerConnection.setRemoteDescription(answer)
+                            console.debug(`[P2P] ✅ Remote description set - SDP answer accepted`)
+                        } catch (error) {
+                            console.warn(`[P2P] ⚠️  Failed to set remote SDP answer:`, error.message)
+                            // Continue anyway - ICE candidates might still work
+                        }
+                    } else {
+                        console.debug(`[P2P] No SDP answer from callee yet, will wait for it`)
+                    }
 
                     // Monitor connection state
                     const checkConnectionState = setInterval(() => {

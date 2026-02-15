@@ -587,51 +587,90 @@ class CallSignaling {
 
         // Recipient address (variable-length)
         const addressLen = bytes[offset++]
+        if (addressLen <= 0 || offset + addressLen > bytes.length) {
+          console.error('[CallSignaling] ❌ Invalid address length:', addressLen, 'at offset', offset, 'bytes total:', bytes.length)
+          return
+        }
         const addressBytes = bytes.slice(offset, offset + addressLen)
         responseData.recipientAddress = String.fromCharCode(...addressBytes)
         offset += addressLen
+        console.debug('[CallSignaling] ✓ Extracted recipient address:', responseData.recipientAddress?.slice(0,20))
 
         // IP address (4 or 16 bytes for IPv4/IPv6)
+        if (offset >= bytes.length) {
+          console.error('[CallSignaling] ❌ Not enough bytes for IP address')
+          return
+        }
+
         const ipByte = bytes[offset++]
         const isIPv6 = (ipByte & 0x80) !== 0
         const ip1 = ipByte & 0x7F
 
         if (!isIPv6) {
           // IPv4: 4 bytes
+          if (offset + 2 > bytes.length) {
+            console.error('[CallSignaling] ❌ Not enough bytes for IPv4 address')
+            return
+          }
           const ip2 = bytes[offset++]
           const ip3 = bytes[offset++]
           const ip4 = bytes[offset++]
           responseData.recipientIp = `${ip1}.${ip2}.${ip3}.${ip4}`
+          console.debug('[CallSignaling] ✓ Extracted IPv4:', responseData.recipientIp)
         } else {
           // IPv6: 16 bytes (simplified)
+          if (offset + 15 > bytes.length) {
+            console.error('[CallSignaling] ❌ Not enough bytes for IPv6 address')
+            return
+          }
           const ipv6Bytes = [ip1, ...bytes.slice(offset, offset + 15)]
           offset += 15
           responseData.recipientIp = ipv6Bytes.slice(0, 8).map((b, i) => {
             const nextB = ipv6Bytes[i + 8] || 0
             return ((b << 8) | nextB).toString(16)
           }).join(':')
+          console.debug('[CallSignaling] ✓ Extracted IPv6:', responseData.recipientIp)
         }
 
         // Port (2 bytes, big-endian)
+        if (offset + 1 >= bytes.length) {
+          console.error('[CallSignaling] ❌ Not enough bytes for port')
+          return
+        }
         const port = (bytes[offset++] << 8) | bytes[offset++]
         responseData.recipientPort = port
+        console.debug('[CallSignaling] ✓ Extracted port:', port)
 
         // Session key (variable-length)
+        if (offset >= bytes.length) {
+          console.error('[CallSignaling] ❌ Not enough bytes for session key length')
+          return
+        }
         const keyLen = bytes[offset++]
+        if (keyLen < 0 || offset + keyLen > bytes.length) {
+          console.error('[CallSignaling] ❌ Invalid session key length:', keyLen)
+          return
+        }
         const keyBytes = bytes.slice(offset, offset + keyLen)
         responseData.recipientSessionKey = String.fromCharCode(...keyBytes)
         offset += keyLen
+        console.debug('[CallSignaling] ✓ Extracted session key:', keyLen, 'bytes')
 
         // SDP answer (OPTIONAL - 2-byte length prefix + variable data)
-        if (offset < bytes.length) {
+        if (offset + 1 < bytes.length) {
           const sdpLen = (bytes[offset++] << 8) | bytes[offset++]
+          console.debug('[CallSignaling] SDP length field:', sdpLen, 'remaining bytes:', bytes.length - offset)
           if (sdpLen > 0 && offset + sdpLen <= bytes.length) {
             const sdpBytes = bytes.slice(offset, offset + sdpLen)
             responseData.sdpAnswer = String.fromCharCode(...sdpBytes)
             console.debug('[CallSignaling] ✓ Extracted SDP answer:', sdpLen, 'bytes')
           } else if (sdpLen === 0) {
-            console.debug('[CallSignaling] ✓ No SDP answer in token')
+            console.debug('[CallSignaling] ✓ No SDP answer in token (length field was 0)')
+          } else {
+            console.warn('[CallSignaling] ⚠️ SDP answer length exceeds available bytes:', sdpLen, 'available:', bytes.length - offset)
           }
+        } else {
+          console.debug('[CallSignaling] No SDP answer field in stateData (too short)')
         }
 
         console.debug('[CallSignaling] ✓ Parsed response data:',  {
