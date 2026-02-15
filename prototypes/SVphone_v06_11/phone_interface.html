@@ -2041,13 +2041,20 @@
                     }
 
                     // Check if we have a reusable token for this specific recipient
+                    console.debug(`[SEND] 🔍 Looking for reusable token for recipient: ${calleeAddress.slice(0, 20)}...`)
                     const reusableToken = await this.findCallTokenForRecipient(calleeAddress)
+                    console.debug(`[SEND] Reusable token found:`, reusableToken ? {
+                        tokenId: reusableToken.tokenId?.slice(0, 20) + '...',
+                        currentTxId: reusableToken.currentTxId?.slice(0, 16) + '...',
+                        status: reusableToken.status
+                    } : 'null')
 
                     if (reusableToken) {
                         // ✅ Token exists for this recipient - instant call (no wait)
                         console.debug(`[SEND] 📤 Initiating call (reusing existing token for ${calleeAddress.slice(0, 10)}...)`)
                         console.debug(`[SEND]   Token ID: ${reusableToken.tokenId?.slice(0, 20)}...`)
                         console.debug(`[SEND]   Token TX: ${reusableToken.currentTxId?.slice(0, 16)}...`)
+                        console.debug(`[SEND]   Calling callManager.initiateCall with reusableTokenId...`)
                         this.updateCallButtonStatus('calling')
                         this.log(`⚡ Instant call - reusing existing token (TX: ${reusableToken.currentTxId?.slice(0, 16)}...)`, 'success')
 
@@ -2058,6 +2065,10 @@
                             quality: quality,
                             reusableTokenId: reusableToken.tokenId  // Pass token ID for transfer
                             // No mintTokenFn = use existing token, no confirmation wait
+                        })
+                        console.debug(`[SEND] ✅ callManager.initiateCall returned successfully with session:`, {
+                            callTokenId: session.callTokenId,
+                            txId: session.txId
                         })
 
                         this.currentCallToken = session.callTokenId

@@ -340,22 +340,36 @@ class CallSignaling {
         if (!reusableTokenId) {
           throw new Error('No reusableTokenId provided for token transfer')
         }
+        console.debug('[CallSignaling] 🔍 Checking tokenBuilder availability...')
+        console.debug('[CallSignaling]   window.tokenBuilder exists:', !!window.tokenBuilder)
+        console.debug('[CallSignaling]   window.tokenBuilder.createTransfer exists:', !!(window.tokenBuilder && typeof window.tokenBuilder.createTransfer === 'function'))
+
         if (typeof window !== 'undefined' && window.tokenBuilder) {
           console.debug('[CallSignaling] 📤 Transferring reusable token to recipient:', callToken.callee)
           console.debug('[CallSignaling]   Token ID: ' + reusableTokenId.slice(0, 20) + '...')
-          const transferResult = await window.tokenBuilder.createTransfer(
-            reusableTokenId,
-            callToken.callee
-          )
-          result = {
-            tokenId: reusableTokenId,
-            txId: transferResult.txId
+
+          try {
+            const transferResult = await window.tokenBuilder.createTransfer(
+              reusableTokenId,
+              callToken.callee
+            )
+            console.debug('[CallSignaling] createTransfer returned:', { txId: transferResult.txId, tokenId: transferResult.tokenId })
+
+            result = {
+              tokenId: reusableTokenId,
+              txId: transferResult.txId
+            }
+            console.debug('[CallSignaling] ✅ Reusable token transferred:', {
+              tokenId: result.tokenId,
+              txId: result.txId,
+              recipient: callToken.callee
+            })
+          } catch (transferError) {
+            console.error('[CallSignaling] ❌ CRITICAL: createTransfer failed:', transferError)
+            console.error('[CallSignaling]   Error message:', transferError.message)
+            console.error('[CallSignaling]   Error stack:', transferError.stack)
+            throw transferError
           }
-          console.debug('[CallSignaling] ✅ Reusable token transferred:', {
-            tokenId: result.tokenId,
-            txId: result.txId,
-            recipient: callToken.callee
-          })
         } else {
           throw new Error('tokenBuilder not available for reusable token transfer')
         }
