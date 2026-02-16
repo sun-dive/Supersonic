@@ -17178,6 +17178,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     window.builder = builder;
     window.tokenBuilder = builder;
     window.store = store;
+    window.tokenStore = store;
     window.provider = provider;
   }
   if (document.readyState === "loading") {
