@@ -1500,6 +1500,15 @@
                                     return false
                                 }
 
+                                // Skip return-to-sender tokens (tokens we sent away and are now coming back)
+                                // These are tokens we originated and transferred to someone else
+                                // They should NOT be treated as new incoming calls
+                                if (t.status === 'transferred' || t.status === 'pending_transfer') {
+                                    console.debug(`[RECV]   ℹ️  Skipping return-to-sender token (status=${t.status})`)
+                                    appInstance.log(`[RECV]       ℹ️  Return-to-sender token (not incoming call)`, 'debug')
+                                    return false
+                                }
+
                                 // Parse hex-encoded tokenAttributes to get call metadata
                                 // Supports both binary format (v1) and legacy JSON format
                                 try {
