@@ -361,25 +361,30 @@ class CallSignaling {
    */
   async validateCallAddresses(token) {
     try {
-      if (!token.tokenRules || !token.tokenRules.restrictions) {
-        console.warn('[CallSignaling] ⚠️ Token missing restrictions field for validation')
+      // Extract address hashes from tokenAttributes (first 8 bytes after version)
+      // Format: [Version(1)][CallerHash(4)][CalleeHash(4)][...rest of attributes]
+      if (!token.tokenAttributes) {
+        console.warn('[CallSignaling] ⚠️ Token missing tokenAttributes for address validation')
         return false
       }
 
-      const restrictionsHash = token.tokenRules.restrictions
-      if (restrictionsHash.length !== 16) {
-        console.warn('[CallSignaling] ⚠️ Invalid restrictions hash length:', restrictionsHash.length)
+      const attrHex = token.tokenAttributes
+      if (attrHex.length < 18) {  // 1 + 4 + 4 = 9 bytes = 18 hex chars minimum
+        console.warn('[CallSignaling] ⚠️ Token attributes too short for address hashes (need 18 hex chars, got', attrHex.length, ')')
         return false
       }
 
-      // Split restrictions into caller and callee hashes
-      const storedCallerHash = restrictionsHash.substring(0, 8)
-      const storedCalleeHash = restrictionsHash.substring(8, 16)
+      // Extract 4-byte hashes from hex string (skip version byte at 0-2)
+      const callerHashHex = attrHex.substring(2, 10)  // 4 bytes = 8 hex chars
+      const calleeHashHex = attrHex.substring(10, 18)  // 4 bytes = 8 hex chars
 
-      console.debug('[CallSignaling] 📋 Restrictions field parsed', {
-        full: restrictionsHash,
-        storedCallerHash,
-        storedCalleeHash
+      // These are already 8-char hex strings from being encoded as 4-byte values
+      const storedCallerHash = callerHashHex.padStart(8, '0')
+      const storedCalleeHash = calleeHashHex.padStart(8, '0')
+
+      console.debug('[CallSignaling] 📋 Address hashes extracted from tokenAttributes', {
+        callerHash: storedCallerHash,
+        calleeHash: storedCalleeHash
       })
 
       console.debug('[CallSignaling] 📌 Token addresses to validate', {

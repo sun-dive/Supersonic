@@ -41,12 +41,31 @@ class CallTokenManager {
    * @param {Object} callToken - Call token with connection info and sdpOffer
    * @returns {string} Hex-encoded binary data
    */
-  encodeCallAttributes(callToken) {
+  encodeCallAttributes(callToken, callerHash, calleeHash) {
     try {
       const bytes = []
 
       // Version marker (0x01 = binary format v1)
       bytes.push(0x01)
+
+      // Address verification hashes (caller + callee, 8 hex chars each = 4 bytes each = 8 bytes total)
+      // These are used by signaling.js to validate call addresses
+      if (callerHash && calleeHash) {
+        // Convert hex string hashes to bytes
+        const callerHashBytes = []
+        for (let i = 0; i < callerHash.length; i += 2) {
+          callerHashBytes.push(parseInt(callerHash.substr(i, 2), 16))
+        }
+        const calleeHashBytes = []
+        for (let i = 0; i < calleeHash.length; i += 2) {
+          calleeHashBytes.push(parseInt(calleeHash.substr(i, 2), 16))
+        }
+        bytes.push(...callerHashBytes)  // First 4 bytes
+        bytes.push(...calleeHashBytes)  // Next 4 bytes
+      } else {
+        // No hashes provided (for answer tokens, just push 8 zero bytes)
+        bytes.push(0, 0, 0, 0, 0, 0, 0, 0)
+      }
 
       // IP address and port
       const ip = callToken.senderIp
@@ -165,6 +184,7 @@ class CallTokenManager {
 
     try {
       // Encode answer data into tokenAttributes (same format as offer, just different SDP content)
+      // For answer tokens, we don't re-encode caller/callee hashes (they stay from genesis)
       const encodedAttributes = this.encodeCallAttributes({
         sdpAnswer: answerData.sdpAnswer,  // Answer goes into same SDP field as offer
         senderIp: answerData.senderIp,
@@ -173,7 +193,7 @@ class CallTokenManager {
         codec: answerData.codec,
         quality: answerData.quality,
         mediaTypes: answerData.mediaTypes
-      })
+      }, null, null)  // No address hashes for answer tokens (keep genesis hashes)
       console.debug(`[CallToken] Encoded answer attributes: ${encodedAttributes.length / 2} bytes`)
 
       // Transfer token back to caller with answer data
@@ -227,26 +247,24 @@ class CallTokenManager {
     this.log(`Creating call token for ${callToken.callee}`, 'info')
 
     try {
-      // Encode call connection information into tokenAttributes (byte-efficient binary format)
-      const encodedAttributes = this.encodeCallAttributes(callToken)
-      console.debug(`[CallToken] Encoded attributes: ${encodedAttributes.length / 2} bytes`)
-
-      // Compute address hashes for tokenRules restrictions field (caller + callee identification)
-      // SHA256 truncated to 32 bits (8 hex chars) per address = 16 hex chars total
+      // Compute address hashes for validation (caller + callee identification)
+      // SHA256 truncated to 32 bits (8 hex chars) per address
       const callerHash = await this.hashAddress(callToken.caller)
       const calleeHash = await this.hashAddress(callToken.callee)
-      const restrictionsHash = callerHash + calleeHash  // Concatenate: 16 hex chars
       console.debug(`[CallToken] Address hashes: caller=${callerHash}, callee=${calleeHash}`)
-      console.debug(`[CallToken] Restrictions field (both hashes): ${restrictionsHash}`)
+
+      // Encode call connection information into tokenAttributes (includes address hashes for validation)
+      const encodedAttributes = this.encodeCallAttributes(callToken, callerHash, calleeHash)
+      console.debug(`[CallToken] Encoded attributes: ${encodedAttributes.length / 2} bytes`)
 
       // Create P token for call signaling with encoded connection info
       const result = await this.tokenBuilder.createGenesis({
         tokenName: `CALL-${callerIdent}`,
         tokenScript: '',  // No consensus rules needed
-        attributes: encodedAttributes,  // Encoded call connection info (IP, port, session key, etc.)
+        attributes: encodedAttributes,  // Encoded call connection info (includes address hashes, IP, port, session key, etc.)
         supply: CALL_TOKEN_RULES.supply,
         divisibility: CALL_TOKEN_RULES.divisibility,
-        restrictions: restrictionsHash,  // Caller + callee address hashes (32-bit each)
+        restrictions: 0,  // No restrictions (address validation via tokenAttributes hashes instead)
         rulesVersion: CALL_TOKEN_RULES.version,
         stateData: '00'  // Empty (state tracked in signaling layer)
       })
