@@ -17176,6 +17176,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
   function initAndExpose() {
     init();
     window.builder = builder;
+    window.tokenBuilder = builder;
     window.store = store;
     window.provider = provider;
   }
