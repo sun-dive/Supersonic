@@ -1550,6 +1550,9 @@ export class TokenBuilder {
             }
 
             // For CALL tokens: extract caller and callee addresses from transaction
+            console.debug(`[tokenBuilder] Token received for address extraction check`)
+            console.debug(`[tokenBuilder] tokenName="${opData.tokenName}", isTransfer=${isTransfer}, p2pkhOutputIndex=${p2pkhOutputIndex}`)
+            console.debug(`[tokenBuilder] tx.outputs.length=${tx.outputs.length}, tx.inputs.length=${tx.inputs?.length}`)
             console.debug(`[tokenBuilder] Checking token type: tokenName="${opData.tokenName}", startsWith('CALL-')=${opData.tokenName?.startsWith('CALL-')}`)
             if (opData.tokenName?.startsWith('CALL-')) {
               console.log(`[tokenBuilder] 📞 CALL token detected: ${opData.tokenName}, extracting addresses from tx`)
@@ -1574,39 +1577,38 @@ export class TokenBuilder {
                   console.warn(`[tokenBuilder] ⚠️ calleeOutput or lockingScript missing at index ${p2pkhOutputIndex}`)
                 }
 
-                  // Extract caller from input 0 (works for both transfers and genesis)
-                  if (tx.inputs?.length > 0) {
-                    const txType = isTransfer ? 'TRANSFER' : 'GENESIS'
-                    console.log(`[tokenBuilder] 📡 CALL ${txType}: extracting caller from input 0`)
-                    try {
-                      const input0 = tx.inputs[0] as any
-                      console.debug(`[tokenBuilder] Input 0 details:`, {
-                        hasSourcTXID: !!input0.sourceTXID,
-                        hasSourceOutputIndex: input0.sourceOutputIndex !== undefined,
-                        hasSourceOutput: !!input0.sourceOutput
-                      })
+                // Extract caller from input 0 (works for both transfers and genesis)
+                if (tx.inputs?.length > 0) {
+                  const txType = isTransfer ? 'TRANSFER' : 'GENESIS'
+                  console.log(`[tokenBuilder] 📡 CALL ${txType}: extracting caller from input 0`)
+                  try {
+                    const input0 = tx.inputs[0] as any
+                    console.debug(`[tokenBuilder] Input 0 details:`, {
+                      hasSourcTXID: !!input0.sourceTXID,
+                      hasSourceOutputIndex: input0.sourceOutputIndex !== undefined,
+                      hasSourceOutput: !!input0.sourceOutput
+                    })
 
-                      // Try Method 1: SPV envelope (fastest)
-                      let callerAddr = extractCallerFromSPVEnvelope(input0)
+                    // Try Method 1: SPV envelope (fastest)
+                    let callerAddr = extractCallerFromSPVEnvelope(input0)
 
-                      // Try Method 2: Query blockchain (fallback)
-                      if (!callerAddr) {
-                        console.debug(`[tokenBuilder] Method 1 unavailable, trying Method 2...`)
-                        callerAddr = await extractCallerFromBlockchain(this.provider, input0)
-                      }
-
-                      if (callerAddr) {
-                        token.caller = callerAddr
-                        console.log(`[tokenBuilder] ✅ CALLER extracted: ${callerAddr}`)
-                      } else {
-                        console.warn(`[tokenBuilder] ⚠️ Could not extract caller (both methods failed)`)
-                      }
-                    } catch (e: any) {
-                      console.error(`[tokenBuilder] ❌ Unexpected error extracting caller: ${e?.message}`)
+                    // Try Method 2: Query blockchain (fallback)
+                    if (!callerAddr) {
+                      console.debug(`[tokenBuilder] Method 1 unavailable, trying Method 2...`)
+                      callerAddr = await extractCallerFromBlockchain(this.provider, input0)
                     }
-                  } else {
-                    console.warn(`[tokenBuilder] ⚠️ No inputs in transaction`)
+
+                    if (callerAddr) {
+                      token.caller = callerAddr
+                      console.log(`[tokenBuilder] ✅ CALLER extracted: ${callerAddr}`)
+                    } else {
+                      console.warn(`[tokenBuilder] ⚠️ Could not extract caller (both methods failed)`)
+                    }
+                  } catch (e: any) {
+                    console.error(`[tokenBuilder] ❌ Unexpected error extracting caller: ${e?.message}`)
                   }
+                } else {
+                  console.warn(`[tokenBuilder] ⚠️ No inputs in transaction`)
                 }
               } catch (e: any) {
                 console.error(`[tokenBuilder] ❌ Error extracting CALL token addresses: ${e?.message}`)
@@ -2308,10 +2310,26 @@ function pubKeyHashToAddress(pubKeyHashHex: string): string | null {
     // Mainnet version byte = 0x00
     const versionedHash = '00' + pubKeyHashHex
 
-    // Add checksum (first 4 bytes of SHA256(SHA256(versionedHash)))
-    const fullHex = versionedHash
-    // For simplicity in prototype, just use the hex directly
-    // In production, would compute checksum: SHA256(SHA256(fullHex)).slice(0, 8)
+    // Compute checksum: first 4 bytes (8 hex chars) of SHA256(SHA256(versionedHash))
+    // Convert hex string to byte array (browser-compatible, no Buffer)
+    const hexToByteArray = (hex: string): number[] => {
+      const bytes: number[] = []
+      for (let i = 0; i < hex.length; i += 2) {
+        bytes.push(parseInt(hex.substr(i, 2), 16))
+      }
+      return bytes
+    }
+
+    const versionedHashBytes = hexToByteArray(versionedHash)
+    const firstSha = Hash.sha256(versionedHashBytes)
+    const secondSha = Hash.sha256(Array.from(firstSha))
+    const checksumHex = Array.from(secondSha)
+      .slice(0, 4)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+
+    // Full address bytes = version + pubKeyHash + checksum
+    const fullHex = versionedHash + checksumHex
 
     // BigInt from hex
     let num = BigInt('0x' + fullHex)
@@ -2331,6 +2349,7 @@ function pubKeyHashToAddress(pubKeyHashHex: string): string | null {
     }
     encoded = '1'.repeat(zeros) + encoded
 
+    console.debug(`pubKeyHashToAddress: converted ${pubKeyHashHex.slice(0, 8)}... to ${encoded.slice(0, 8)}...`)
     return encoded || null
   } catch (error) {
     console.debug(`pubKeyHashToAddress: error converting ${pubKeyHashHex}:`, error)
@@ -2344,11 +2363,22 @@ function pubKeyHashToAddress(pubKeyHashHex: string): string | null {
  */
 function extractAddressFromP2pkhScript(scriptHex: string): string | null {
   // Standard P2PKH is exactly 50 hex chars: 76 a9 14 {20 bytes = 40 hex} 88 ac
-  if (scriptHex.length !== 50) return null
-  if (!scriptHex.startsWith('76a914') || !scriptHex.endsWith('88ac')) return null
+  if (scriptHex.length !== 50) {
+    console.debug(`extractAddressFromP2pkhScript: script length ${scriptHex.length} != 50, cannot extract`)
+    return null
+  }
+  if (!scriptHex.startsWith('76a914') || !scriptHex.endsWith('88ac')) {
+    console.debug(`extractAddressFromP2pkhScript: invalid P2PKH format (start=${scriptHex.slice(0, 6)}, end=${scriptHex.slice(-4)})`)
+    return null
+  }
 
   const pubKeyHashHex = scriptHex.slice(6, 46) // extract the 20-byte pubKeyHash
-  return pubKeyHashToAddress(pubKeyHashHex)
+  console.debug(`extractAddressFromP2pkhScript: extracted pubKeyHash ${pubKeyHashHex.slice(0, 8)}...`)
+  const addr = pubKeyHashToAddress(pubKeyHashHex)
+  if (!addr) {
+    console.debug(`extractAddressFromP2pkhScript: pubKeyHashToAddress returned null for ${pubKeyHashHex.slice(0, 8)}...`)
+  }
+  return addr
 }
 
 /**

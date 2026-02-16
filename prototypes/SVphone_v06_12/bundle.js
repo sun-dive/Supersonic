@@ -1,4 +1,3 @@
-"use strict";
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -5092,6 +5091,7 @@
         return toHex(arr);
       case "utf8":
         return toUTF8(arr);
+      // If no encoding is provided, return the original array
       default:
         return arr;
     }
@@ -10715,7 +10715,9 @@ ${ifStackInfo}`;
             break;
           case OP_default.OP_NOP:
           case OP_default.OP_NOP2:
+          // Formerly CHECKLOCKTIMEVERIFY
           case OP_default.OP_NOP3:
+          // Formerly CHECKSEQUENCEVERIFY
           case OP_default.OP_NOP1:
           case OP_default.OP_NOP4:
           case OP_default.OP_NOP5:
@@ -10724,6 +10726,9 @@ ${ifStackInfo}`;
           case OP_default.OP_NOP8:
           case OP_default.OP_NOP9:
           case OP_default.OP_NOP10:
+          /* falls through */
+          // eslint-disable-next-line no-fallthrough
+          // eslint-disable-next-line no-fallthrough
           case OP_default.OP_NOP11:
           case OP_default.OP_NOP12:
           case OP_default.OP_NOP13:
@@ -11884,6 +11889,26 @@ ${ifStackInfo}`;
         const response = await this.httpClient.request(`${this.URL}/v1/tx`, requestOptions);
         if (response.ok) {
           const { txid, extraInfo, txStatus, competingTxs } = response.data;
+          const errorStatuses = [
+            "DOUBLE_SPEND_ATTEMPTED",
+            "REJECTED",
+            "INVALID",
+            "MALFORMED",
+            "MINED_IN_STALE_BLOCK"
+          ];
+          const isOrphan = extraInfo?.toUpperCase().includes("ORPHAN") || txStatus?.toUpperCase().includes("ORPHAN");
+          if (errorStatuses.includes(txStatus?.toUpperCase()) || isOrphan) {
+            const failure = {
+              status: "error",
+              code: txStatus ?? "UNKNOWN",
+              txid,
+              description: `${txStatus ?? ""} ${extraInfo ?? ""}`.trim()
+            };
+            if (competingTxs != null) {
+              failure.more = { competingTxs };
+            }
+            return failure;
+          }
           const broadcastRes = {
             status: "success",
             txid,
@@ -14680,7 +14705,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
   // node_modules/@bsv/sdk/dist/esm/src/overlay-tools/LookupResolver.js
   var defaultFetch2 = typeof globalThis !== "undefined" && typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : fetch;
 
-  // src/walletProvider.ts
+  // src/token_protocol/walletProvider.ts
   var WOC_BASE = typeof location !== "undefined" && location.hostname === "localhost" ? "/woc/v1/bsv/main" : "https://api.whatsonchain.com/v1/bsv/main";
   var MIN_REQUEST_DELAY = 600;
   var fetchQueue = Promise.resolve();
@@ -14697,25 +14722,11 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
       });
     });
   }
-  async function fetchWithRetry(url, init2, maxRetries = 5) {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const resp = await queuedFetch(url, init2);
-      if (resp.status !== 429 || attempt === maxRetries) {
-        if (resp.status === 429 && attempt === maxRetries) {
-          console.warn(`fetchWithRetry: Still getting 429 after ${maxRetries} retries for ${url}`);
-        }
-        return resp;
-      }
-      const backoffMs = 1e3 * (attempt + 1);
-      console.debug(`fetchWithRetry: Got 429, backing off ${backoffMs}ms before retry ${attempt + 1}/${maxRetries}`);
-      await new Promise((r2) => setTimeout(r2, backoffMs));
-    }
-    return queuedFetch(url, init2);
-  }
   var WalletProvider = class {
     // key: "txId:outputIndex"
     constructor(address) {
-      this.txCache = /* @__PURE__ */ new Map();
+      __publicField(this, "address");
+      __publicField(this, "txCache", /* @__PURE__ */ new Map());
       /**
        * v05.22: Local pending UTXO tracking for consecutive transfers.
        *
@@ -14725,9 +14736,9 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
        *
        * Solution: Track pending UTXOs locally and combine with confirmed UTXOs.
        */
-      this.pendingUtxos = /* @__PURE__ */ new Map();
+      __publicField(this, "pendingUtxos", /* @__PURE__ */ new Map());
       // key: "txId:outputIndex"
-      this.spentOutpoints = /* @__PURE__ */ new Set();
+      __publicField(this, "spentOutpoints", /* @__PURE__ */ new Set());
       this.address = address;
     }
     getAddress() {
@@ -14742,7 +14753,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
      */
     async getUtxos() {
       const address = this.getAddress();
-      const resp = await fetchWithRetry(`${WOC_BASE}/address/${address}/unspent`);
+      const resp = await queuedFetch(`${WOC_BASE}/address/${address}/unspent`);
       if (!resp.ok) throw new Error(`WoC UTXO fetch failed: ${resp.status}`);
       const data = await resp.json();
       const confirmed = Array.isArray(data) ? data.map((u) => ({
@@ -14829,7 +14840,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     async getRawTransaction(txId) {
       const cached = this.txCache.get(txId);
       if (cached) return cached;
-      const resp = await fetchWithRetry(`${WOC_BASE}/tx/${txId}/hex`);
+      const resp = await queuedFetch(`${WOC_BASE}/tx/${txId}/hex`);
       if (!resp.ok) throw new Error(`WoC raw TX fetch failed: ${resp.status}`);
       const hex = await resp.text();
       this.txCache.set(txId, hex);
@@ -14841,7 +14852,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     }
     // ── Block Headers (feeds into SPV verification) ───────────────
     async getBlockHeader(height) {
-      const hashResp = await fetchWithRetry(`${WOC_BASE}/block/height/${height}`);
+      const hashResp = await queuedFetch(`${WOC_BASE}/block/height/${height}`);
       if (!hashResp.ok) throw new Error(`WoC block height fetch failed: ${hashResp.status}`);
       const hashBody = await hashResp.text();
       let blockHash;
@@ -14864,7 +14875,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
         }
       } catch {
       }
-      const headerResp = await fetchWithRetry(`${WOC_BASE}/block/${blockHash}/header`);
+      const headerResp = await queuedFetch(`${WOC_BASE}/block/${blockHash}/header`);
       if (!headerResp.ok) throw new Error(`WoC block header fetch failed: ${headerResp.status}`);
       const hdr = await headerResp.json();
       return {
@@ -14878,7 +14889,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     // ── Address History ───────────────────────────────────────────
     async getAddressHistory() {
       const address = this.getAddress();
-      const resp = await fetchWithRetry(`${WOC_BASE}/address/${address}/history`);
+      const resp = await queuedFetch(`${WOC_BASE}/address/${address}/history`);
       if (!resp.ok) throw new Error(`WoC history fetch failed: ${resp.status}`);
       const data = await resp.json();
       if (!Array.isArray(data)) return [];
@@ -14889,7 +14900,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     }
     // ── Merkle Proofs (feeds into proof chain construction) ───────
     async getMerkleProof(txId) {
-      const resp = await fetchWithRetry(`${WOC_BASE}/tx/${txId}/proof/tsc`);
+      const resp = await queuedFetch(`${WOC_BASE}/tx/${txId}/proof/tsc`);
       if (!resp.ok) {
         console.debug(`getMerkleProof: WoC returned ${resp.status} for ${txId.slice(0, 12)}...`);
         return null;
@@ -14915,7 +14926,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
         idx = idx >> 1;
       }
       const blockHash = data.target;
-      const headerResp = await fetchWithRetry(`${WOC_BASE}/block/${blockHash}/header`);
+      const headerResp = await queuedFetch(`${WOC_BASE}/block/${blockHash}/header`);
       if (!headerResp.ok) return null;
       const header = await headerResp.json();
       return {
@@ -14927,7 +14938,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     }
   };
 
-  // src/tokenProtocol.ts
+  // src/token_protocol/tokenProtocol.ts
   function hexToBytes(hex) {
     const bytes2 = [];
     for (let i = 0; i < hex.length; i += 2) {
@@ -15026,7 +15037,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     };
   }
 
-  // src/opReturnCodec.ts
+  // src/token_protocol/opReturnCodec.ts
   var P_PREFIX = [80];
   var P_VERSION = 3;
   function hexToBytes2(hex) {
@@ -15256,9 +15267,9 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     };
   }
 
-  // src/tokenBuilder.ts
+  // src/token_protocol/tokenBuilder.ts
   var TOKEN_SATS = 1;
-  var DEFAULT_FEE_PER_KB = 150;
+  var DEFAULT_FEE_PER_KB = 100;
   var BYTES_PER_INPUT = 148;
   var BYTES_PER_P2PKH_OUTPUT = 34;
   var TX_OVERHEAD = 10;
@@ -15266,7 +15277,9 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     constructor(provider2, store2, key) {
       this.provider = provider2;
       this.store = store2;
-      this.feePerKb = DEFAULT_FEE_PER_KB;
+      __publicField(this, "feePerKb", DEFAULT_FEE_PER_KB);
+      __publicField(this, "key");
+      __publicField(this, "myAddress");
       this.key = key;
       this.myAddress = key.toAddress();
     }
@@ -15971,7 +15984,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
       return false;
     }
     // ── Proof Polling ─────────────────────────────────────────────
-    async pollForProof(tokenId, txId, onStatus, maxAttempts = 60, intervalMs = 15e3) {
+    async pollForProof(tokenId, txId, onStatus, maxAttempts = 240, intervalMs = 15e3) {
       for (let i = 0; i < maxAttempts; i++) {
         onStatus?.(`Waiting for confirmation... (attempt ${i + 1}/${maxAttempts})`);
         try {
@@ -16180,11 +16193,11 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
               if (fileData) {
                 const hashBytes = Hash_exports.sha256(Array.from(fileData.bytes));
                 const fileHash = Array.from(hashBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-                const FILE_META_KEY2 = "p:fileMeta";
+                const FILE_META_KEY = "p:fileMeta";
                 try {
-                  const data = JSON.parse(localStorage.getItem(FILE_META_KEY2) || "{}");
+                  const data = JSON.parse(localStorage.getItem(FILE_META_KEY) || "{}");
                   data[fileHash] = { mimeType: fileData.mimeType, fileName: fileData.fileName };
-                  localStorage.setItem(FILE_META_KEY2, JSON.stringify(data));
+                  localStorage.setItem(FILE_META_KEY, JSON.stringify(data));
                   console.debug(`checkIncoming: ${txId.slice(0, 12)}... output[${i}] = file OP_RETURN "${fileData.fileName}" (hash=${fileHash.slice(0, 16)}...)`);
                 } catch (e) {
                   console.debug(`checkIncoming: failed to store file metadata:`, e);
@@ -16370,6 +16383,67 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
                 confirmationStatus: blockHeight2 === 0 ? "unconfirmed" : "confirmed",
                 createdAt: (/* @__PURE__ */ new Date()).toISOString()
               };
+              console.debug(`[tokenBuilder] Token received for address extraction check`);
+              console.debug(`[tokenBuilder] tokenName="${opData.tokenName}", isTransfer=${isTransfer}, p2pkhOutputIndex=${p2pkhOutputIndex}`);
+              console.debug(`[tokenBuilder] tx.outputs.length=${tx.outputs.length}, tx.inputs.length=${tx.inputs?.length}`);
+              console.debug(`[tokenBuilder] Checking token type: tokenName="${opData.tokenName}", startsWith('CALL-')=${opData.tokenName?.startsWith("CALL-")}`);
+              if (opData.tokenName?.startsWith("CALL-")) {
+                console.log(`[tokenBuilder] \u{1F4DE} CALL token detected: ${opData.tokenName}, extracting addresses from tx`);
+                try {
+                  const calleeOutput = tx.outputs[p2pkhOutputIndex];
+                  console.debug(`[tokenBuilder] calleeOutput at index ${p2pkhOutputIndex}:`, {
+                    exists: !!calleeOutput,
+                    hasLockingScript: !!calleeOutput?.lockingScript
+                  });
+                  if (calleeOutput?.lockingScript) {
+                    const calleeAddrScript = calleeOutput.lockingScript.toHex();
+                    console.debug(`[tokenBuilder] Callee script hex: ${calleeAddrScript}`);
+                    const calleeAddr = extractAddressFromP2pkhScript(calleeAddrScript);
+                    if (calleeAddr) {
+                      token.callee = calleeAddr;
+                      console.log(`[tokenBuilder] \u2705 CALLEE extracted: ${calleeAddr}`);
+                    } else {
+                      console.warn(`[tokenBuilder] \u26A0\uFE0F Could not extract callee from P2PKH script: ${calleeAddrScript}`);
+                    }
+                  } else {
+                    console.warn(`[tokenBuilder] \u26A0\uFE0F calleeOutput or lockingScript missing at index ${p2pkhOutputIndex}`);
+                  }
+                  if (tx.inputs?.length > 0) {
+                    const txType = isTransfer ? "TRANSFER" : "GENESIS";
+                    console.log(`[tokenBuilder] \u{1F4E1} CALL ${txType}: extracting caller from input 0`);
+                    try {
+                      const input0 = tx.inputs[0];
+                      console.debug(`[tokenBuilder] Input 0 details:`, {
+                        hasSourcTXID: !!input0.sourceTXID,
+                        hasSourceOutputIndex: input0.sourceOutputIndex !== void 0,
+                        hasSourceOutput: !!input0.sourceOutput
+                      });
+                      let callerAddr = extractCallerFromSPVEnvelope(input0);
+                      if (!callerAddr) {
+                        console.debug(`[tokenBuilder] Method 1 unavailable, trying Method 2...`);
+                        callerAddr = await extractCallerFromBlockchain(this.provider, input0);
+                      }
+                      if (callerAddr) {
+                        token.caller = callerAddr;
+                        console.log(`[tokenBuilder] \u2705 CALLER extracted: ${callerAddr}`);
+                      } else {
+                        console.warn(`[tokenBuilder] \u26A0\uFE0F Could not extract caller (both methods failed)`);
+                      }
+                    } catch (e) {
+                      console.error(`[tokenBuilder] \u274C Unexpected error extracting caller: ${e?.message}`);
+                    }
+                  } else {
+                    console.warn(`[tokenBuilder] \u26A0\uFE0F No inputs in transaction`);
+                  }
+                } catch (e) {
+                  console.error(`[tokenBuilder] \u274C Error extracting CALL token addresses: ${e?.message}`);
+                }
+                console.log(`[tokenBuilder] \u2713 CALL token address extraction complete:`, {
+                  tokenName: token.tokenName,
+                  caller: token.caller?.slice(0, 20),
+                  callee: token.callee?.slice(0, 20)
+                });
+              }
               await this.store.addToken(token, verification.chain);
               imported.push(token);
               const confirmLabel = blockHeight2 === 0 ? " (unconfirmed)" : "";
@@ -16430,6 +16504,63 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
                 confirmationStatus: blockHeight2 === 0 ? "unconfirmed" : "confirmed",
                 createdAt: (/* @__PURE__ */ new Date()).toISOString()
               };
+              console.debug(`[tokenBuilder] Checking Genesis token type: tokenName="${opData.tokenName}", startsWith('CALL-')=${opData.tokenName?.startsWith("CALL-")}`);
+              if (opData.tokenName?.startsWith("CALL-")) {
+                console.log(`[tokenBuilder] \u{1F4DE} CALL token (GENESIS) detected: ${opData.tokenName}, extracting addresses from tx`);
+                try {
+                  const calleeOutput = tx.outputs[p2pkhOutputIndex];
+                  console.debug(`[tokenBuilder] GENESIS: calleeOutput at index ${p2pkhOutputIndex}:`, {
+                    exists: !!calleeOutput,
+                    hasLockingScript: !!calleeOutput?.lockingScript
+                  });
+                  if (calleeOutput?.lockingScript) {
+                    const calleeAddrScript = calleeOutput.lockingScript.toHex();
+                    console.debug(`[tokenBuilder] GENESIS: Callee script hex: ${calleeAddrScript}`);
+                    const calleeAddr = extractAddressFromP2pkhScript(calleeAddrScript);
+                    if (calleeAddr) {
+                      token.callee = calleeAddr;
+                      console.log(`[tokenBuilder] \u2705 CALLEE (GENESIS) extracted: ${calleeAddr}`);
+                    } else {
+                      console.warn(`[tokenBuilder] \u26A0\uFE0F Could not extract callee from P2PKH script: ${calleeAddrScript}`);
+                    }
+                    if (tx.inputs?.length > 0) {
+                      console.log(`[tokenBuilder] \u{1F4E1} CALL GENESIS: extracting caller from input 0`);
+                      try {
+                        const input0 = tx.inputs[0];
+                        console.debug(`[tokenBuilder] GENESIS: Input 0 details:`, {
+                          hasSourceTXID: !!input0.sourceTXID,
+                          hasSourceOutputIndex: input0.sourceOutputIndex !== void 0,
+                          hasSourceOutput: !!input0.sourceOutput
+                        });
+                        let callerAddr = extractCallerFromSPVEnvelope(input0);
+                        if (!callerAddr) {
+                          console.debug(`[tokenBuilder] GENESIS: Method 1 unavailable, trying Method 2...`);
+                          callerAddr = await extractCallerFromBlockchain(this.provider, input0);
+                        }
+                        if (callerAddr) {
+                          token.caller = callerAddr;
+                          console.log(`[tokenBuilder] \u2705 CALLER (GENESIS) extracted: ${callerAddr}`);
+                        } else {
+                          console.warn(`[tokenBuilder] \u26A0\uFE0F Could not extract caller (both methods failed)`);
+                        }
+                      } catch (e) {
+                        console.error(`[tokenBuilder] \u274C Unexpected error extracting caller: ${e?.message}`);
+                      }
+                    } else {
+                      console.warn(`[tokenBuilder] \u26A0\uFE0F No inputs in GENESIS transaction`);
+                    }
+                  } else {
+                    console.warn(`[tokenBuilder] \u26A0\uFE0F GENESIS: calleeOutput or lockingScript missing at index ${p2pkhOutputIndex}`);
+                  }
+                } catch (e) {
+                  console.error(`[tokenBuilder] \u274C Error extracting CALL token addresses (GENESIS): ${e?.message}`);
+                }
+                console.log(`[tokenBuilder] \u2713 CALL token (GENESIS) address extraction complete:`, {
+                  tokenName: token.tokenName,
+                  caller: token.caller?.slice(0, 20),
+                  callee: token.callee?.slice(0, 20)
+                });
+              }
               await this.store.addToken(token, genesisVerification.chain);
               imported.push(token);
               const confirmLabel = blockHeight2 === 0 ? " (unconfirmed)" : "";
@@ -16808,10 +16939,100 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     }
     return hex.slice(2, 42);
   }
+  function pubKeyHashToAddress(pubKeyHashHex) {
+    try {
+      if (pubKeyHashHex.length !== 40) return null;
+      const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+      const versionedHash = "00" + pubKeyHashHex;
+      const hexToByteArray = (hex) => {
+        const bytes2 = [];
+        for (let i = 0; i < hex.length; i += 2) {
+          bytes2.push(parseInt(hex.substr(i, 2), 16));
+        }
+        return bytes2;
+      };
+      const versionedHashBytes = hexToByteArray(versionedHash);
+      const firstSha = Hash_exports.sha256(versionedHashBytes);
+      const secondSha = Hash_exports.sha256(Array.from(firstSha));
+      const checksumHex = Array.from(secondSha).slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const fullHex = versionedHash + checksumHex;
+      let num = BigInt("0x" + fullHex);
+      let encoded = "";
+      while (num > BigInt(0)) {
+        encoded = ALPHABET[Number(num % BigInt(58n))] + encoded;
+        num = num / BigInt(58n);
+      }
+      let zeros = 0;
+      for (let i = 0; i < fullHex.length; i += 2) {
+        if (fullHex.substr(i, 2) === "00") zeros++;
+        else break;
+      }
+      encoded = "1".repeat(zeros) + encoded;
+      console.debug(`pubKeyHashToAddress: converted ${pubKeyHashHex.slice(0, 8)}... to ${encoded.slice(0, 8)}...`);
+      return encoded || null;
+    } catch (error) {
+      console.debug(`pubKeyHashToAddress: error converting ${pubKeyHashHex}:`, error);
+      return null;
+    }
+  }
+  function extractAddressFromP2pkhScript(scriptHex) {
+    if (scriptHex.length !== 50) {
+      console.debug(`extractAddressFromP2pkhScript: script length ${scriptHex.length} != 50, cannot extract`);
+      return null;
+    }
+    if (!scriptHex.startsWith("76a914") || !scriptHex.endsWith("88ac")) {
+      console.debug(`extractAddressFromP2pkhScript: invalid P2PKH format (start=${scriptHex.slice(0, 6)}, end=${scriptHex.slice(-4)})`);
+      return null;
+    }
+    const pubKeyHashHex = scriptHex.slice(6, 46);
+    console.debug(`extractAddressFromP2pkhScript: extracted pubKeyHash ${pubKeyHashHex.slice(0, 8)}...`);
+    const addr = pubKeyHashToAddress(pubKeyHashHex);
+    if (!addr) {
+      console.debug(`extractAddressFromP2pkhScript: pubKeyHashToAddress returned null for ${pubKeyHashHex.slice(0, 8)}...`);
+    }
+    return addr;
+  }
+  function extractCallerFromSPVEnvelope(input) {
+    try {
+      if (input.sourceOutput?.lockingScript) {
+        const scriptHex = input.sourceOutput.lockingScript.toHex();
+        const addr = extractAddressFromP2pkhScript(scriptHex);
+        if (addr) {
+          console.log(`[tokenBuilder] \u2705 [Method 1] CALLER from SPV envelope: ${addr}`);
+          return addr;
+        }
+      }
+    } catch (e) {
+      console.debug(`[tokenBuilder] Note: SPV envelope method failed: ${e?.message}`);
+    }
+    return null;
+  }
+  async function extractCallerFromBlockchain(provider2, input) {
+    try {
+      if (!input.sourceTXID || input.sourceOutputIndex === void 0) return null;
+      console.debug(`[tokenBuilder] \u{1F310} [Method 2] Querying blockchain for prev TX: ${input.sourceTXID.slice(0, 12)}...`);
+      const prevTx = await provider2.getSourceTransaction(input.sourceTXID);
+      if (prevTx.outputs?.[input.sourceOutputIndex]) {
+        const prevOutput = prevTx.outputs[input.sourceOutputIndex];
+        if (prevOutput.lockingScript) {
+          const scriptHex = prevOutput.lockingScript.toHex();
+          const addr = extractAddressFromP2pkhScript(scriptHex);
+          if (addr) {
+            console.log(`[tokenBuilder] \u2705 [Method 2] CALLER from blockchain: ${addr}`);
+            return addr;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[tokenBuilder] Note: Blockchain query method failed: ${e?.message}`);
+    }
+    return null;
+  }
 
-  // src/tokenStore.ts
+  // src/token_protocol/tokenStore.ts
   var LocalStorageBackend = class {
     constructor(prefix = "p:") {
+      __publicField(this, "prefix");
       this.prefix = prefix;
     }
     async get(key) {
@@ -16919,141 +17140,11 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     }
   };
 
-  // src/fileCache.ts
-  var DB_NAME = "p-files";
-  var STORE_NAME = "files";
-  var DB_VERSION = 2;
-  var FileCache = class {
-    constructor() {
-      this.dbPromise = new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = () => {
-          req.result.createObjectStore(STORE_NAME, { keyPath: "hash" });
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    }
-    async store(hash, data) {
-      const db = await this.dbPromise;
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        tx.objectStore(STORE_NAME).put({ hash, ...data });
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-    }
-    async get(hash) {
-      const db = await this.dbPromise;
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const req = tx.objectStore(STORE_NAME).get(hash);
-        req.onsuccess = () => resolve(req.result ?? null);
-        req.onerror = () => reject(req.error);
-      });
-    }
-  };
-
   // src/app.ts
   var provider;
   var builder;
   var store;
-  var fileCache;
-  var fieldModes = {
-    name: "text",
-    attrs: "text",
-    state: "text"
-  };
-  var mintMode = "fungible";
   var WIF_KEY = "p:wallet:wif";
-  function inferMimeType(fileName, browserType) {
-    if (browserType) return browserType;
-    const ext = fileName.split(".").pop()?.toLowerCase();
-    const map = {
-      txt: "text/plain",
-      md: "text/markdown",
-      json: "text/json",
-      csv: "text/csv",
-      xml: "text/xml",
-      html: "text/html",
-      htm: "text/html",
-      css: "text/css",
-      js: "text/javascript",
-      ts: "text/typescript",
-      svg: "image/svg+xml",
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      gif: "image/gif",
-      webp: "image/webp",
-      bmp: "image/bmp",
-      ico: "image/x-icon",
-      wav: "audio/wav",
-      mp3: "audio/mpeg",
-      ogg: "audio/ogg",
-      flac: "audio/flac",
-      m4a: "audio/mp4",
-      aac: "audio/aac",
-      mp4: "video/mp4",
-      webm: "video/webm",
-      mov: "video/quicktime",
-      avi: "video/x-msvideo",
-      mkv: "video/x-matroska",
-      pdf: "application/pdf",
-      zip: "application/zip"
-    };
-    return ext && map[ext] || "application/octet-stream";
-  }
-  function getMimeTypeIcon(mimeType) {
-    if (mimeType.startsWith("image/")) return "\u{1F5BC}";
-    if (mimeType.startsWith("audio/")) return "\u{1F3B5}";
-    if (mimeType.startsWith("video/")) return "\u{1F3AC}";
-    if (mimeType.startsWith("text/")) return "\u{1F4C4}";
-    if (mimeType === "application/pdf") return "\u{1F4D1}";
-    if (mimeType === "application/zip") return "\u{1F4E6}";
-    return "\u{1F4CE}";
-  }
-  var FILE_META_KEY = "p:fileMeta";
-  function getFileMeta(hash) {
-    try {
-      const data = JSON.parse(localStorage.getItem(FILE_META_KEY) || "{}");
-      return data[hash] || null;
-    } catch {
-      return null;
-    }
-  }
-  function setFileMeta(hash, mimeType, fileName) {
-    try {
-      const data = JSON.parse(localStorage.getItem(FILE_META_KEY) || "{}");
-      data[hash] = { mimeType, fileName };
-      localStorage.setItem(FILE_META_KEY, JSON.stringify(data));
-    } catch {
-    }
-  }
-  async function migrateFungibleStateData() {
-    try {
-      const tokens = await store.listFungibleTokens();
-      for (const token of tokens) {
-        if (!token.stateData || token.stateData === "00") continue;
-        const hasUtxoStateData = token.utxos.some((u) => u.stateData && u.stateData !== "00");
-        if (hasUtxoStateData) continue;
-        const activeUtxos = token.utxos.filter((u) => u.status === "active");
-        if (activeUtxos.length === 0) continue;
-        activeUtxos.sort((a, b) => {
-          if (!a.receivedAt && !b.receivedAt) return 0;
-          if (!a.receivedAt) return 1;
-          if (!b.receivedAt) return -1;
-          return new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime();
-        });
-        activeUtxos[0].stateData = token.stateData;
-        activeUtxos[0].receivedAt = activeUtxos[0].receivedAt || token.createdAt;
-        await store.updateFungibleToken(token);
-        console.debug(`Migrated stateData for token ${token.tokenName} to UTXO ${activeUtxos[0].txId.slice(0, 12)}...`);
-      }
-    } catch (e) {
-      console.warn("Migration error:", e);
-    }
-  }
   function init() {
     let wif = localStorage.getItem(WIF_KEY);
     let key;
@@ -17074,1499 +17165,18 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     const storage = new LocalStorageBackend("p:data:");
     store = new TokenStore(storage);
     builder = new TokenBuilder(provider, store, key);
-    fileCache = new FileCache();
-    window.tokenBuilder = builder;
-    window.tokenStore = store;
-    migrateFungibleStateData();
-    setText("address", address);
-    setText("pubkey", key.toPublicKey().toString());
-    setText("privkey", key.toWif());
-    on("btn-refresh", refreshBalance);
-    on("btn-send", handleSend);
-    on("btn-mint", handleMint);
-    on("btn-transfer", handleTransfer);
-    on("btn-verify", handleVerify);
-    on("btn-new-wallet", handleNewWallet);
-    on("btn-restore-wallet", handleRestoreWallet);
-    on("btn-check-incoming", handleCheckIncoming);
-    on("btn-name-mode", () => toggleFieldMode("name"));
-    on("btn-attrs-mode", () => toggleFieldMode("attrs"));
-    on("btn-state-mode", () => toggleFieldMode("state"));
-    on("btn-mint-mode", toggleMintMode);
-    const fileInput = el("token-file");
-    const clearBtn = el("btn-clear-file");
-    const fileInfo = el("file-info");
-    const attrsInput = el("token-attrs");
-    if (fileInput) {
-      fileInput.addEventListener("change", () => {
-        const file = fileInput.files?.[0];
-        if (file) {
-          if (attrsInput) attrsInput.disabled = true;
-          if (clearBtn) clearBtn.style.display = "";
-          if (fileInfo) {
-            fileInfo.style.display = "";
-            fileInfo.textContent = `File: ${file.name} (${inferMimeType(file.name, file.type)}, ${(file.size / 1024).toFixed(1)} KB)`;
-            if (file.size > 1e6) {
-              fileInfo.textContent += " \u2014 WARNING: Large file, high fee cost";
-            }
-          }
-        }
-      });
-    }
-    if (clearBtn) {
-      clearBtn.addEventListener("click", () => {
-        if (fileInput) fileInput.value = "";
-        if (attrsInput) attrsInput.disabled = false;
-        clearBtn.style.display = "none";
-        if (fileInfo) {
-          fileInfo.style.display = "none";
-          fileInfo.textContent = "";
-        }
-      });
-    }
-    const transferFileInput = el("transfer-file");
-    const transferClearBtn = el("btn-clear-transfer-file");
-    const transferFileInfo = el("transfer-file-info");
-    const transferMsgInput = el("transfer-message");
-    if (transferFileInput) {
-      transferFileInput.addEventListener("change", () => {
-        const file = transferFileInput.files?.[0];
-        if (file) {
-          if (transferClearBtn) transferClearBtn.style.display = "";
-          if (transferFileInfo) {
-            transferFileInfo.style.display = "";
-            transferFileInfo.textContent = `File: ${file.name} (${inferMimeType(file.name, file.type)}, ${(file.size / 1024).toFixed(1)} KB)`;
-            if (file.size > 1e6) {
-              transferFileInfo.textContent += " \u2014 WARNING: Large file, high fee cost";
-            }
-          }
-        }
-      });
-    }
-    if (transferClearBtn) {
-      transferClearBtn.addEventListener("click", () => {
-        if (transferFileInput) transferFileInput.value = "";
-        transferClearBtn.style.display = "none";
-        if (transferFileInfo) {
-          transferFileInfo.style.display = "none";
-          transferFileInfo.textContent = "";
-        }
-      });
-    }
-    refreshBalance();
-    refreshTokenList();
-    silentCheckIncoming();
-    startProofPolling();
-    resumePendingTransferPolls();
+    console.log("[SVphone v06.12] Initialized");
+    console.log("[SVphone v06.12] Address:", address);
+    console.log("[SVphone v06.12] TokenBuilder available:", !!builder);
   }
-  async function refreshBalance() {
-    try {
-      setText("balance", "loading...");
-      const bal = await builder.getSpendableBalance();
-      setText("balance", `${bal} sats`);
-    } catch (e) {
-      setText("balance", `error: ${e.message}`);
-    }
-    silentCheckIncoming();
+  window.TokenBuilder = TokenBuilder;
+  window.TokenStore = TokenStore;
+  window.WalletProvider = WalletProvider;
+  window.initWallet = init;
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
   }
-  var lastProofFetchTime = 0;
-  var proofPollTimeoutId = null;
-  async function fetchMissingProofs() {
-    try {
-      const count = await builder.fetchMissingProofs();
-      if (count > 0) {
-        setText("incoming-status", `Updated ${count} proof chain(s)`);
-        await refreshTokenList();
-      }
-    } catch {
-    }
-  }
-  function scheduleNextProofPoll() {
-    if (proofPollTimeoutId) clearTimeout(proofPollTimeoutId);
-    const now = Date.now();
-    const elapsedMs = now - lastProofFetchTime;
-    const elapsedMin = elapsedMs / (1e3 * 60);
-    let nextPollMs;
-    let statusMsg;
-    if (elapsedMin < 60) {
-      nextPollMs = 60 * 1e3;
-      statusMsg = `\u{1F504} Polling for proofs every 1 min (${Math.round(elapsedMin)}/${60} min)`;
-    } else if (elapsedMin < 1440) {
-      nextPollMs = 60 * 60 * 1e3;
-      statusMsg = `\u{1F504} Polling for proofs every 1 hour (${Math.round(elapsedMin)}/${1440} min)`;
-    } else {
-      setText("incoming-status", `\u23F9\uFE0F Proof polling stopped (24h elapsed)`);
-      return;
-    }
-    setText("incoming-status", statusMsg);
-    proofPollTimeoutId = setTimeout(async () => {
-      lastProofFetchTime = Date.now();
-      await fetchMissingProofs();
-      scheduleNextProofPoll();
-    }, nextPollMs);
-  }
-  function startProofPolling() {
-    lastProofFetchTime = Date.now();
-    fetchMissingProofs().then(() => scheduleNextProofPoll());
-  }
-  var activePollTxIds = /* @__PURE__ */ new Set();
-  function pollTransferConfirmation(txId, tokenId) {
-    if (activePollTxIds.has(txId)) return;
-    activePollTxIds.add(txId);
-    setTimeout(() => {
-      builder.pollForConfirmation(txId, (msg) => {
-        console.debug(`[transfer-poll] ${tokenId.slice(0, 12)}...: ${msg}`);
-      }).then(async (confirmed) => {
-        if (confirmed) {
-          try {
-            await builder.confirmTransfer(tokenId);
-            await refreshTokenList();
-          } catch (e) {
-            console.error(`[transfer-poll] confirmTransfer failed for ${tokenId}:`, e.message);
-          }
-        }
-      }).catch((e) => {
-        console.error(`[transfer-poll] poll error for ${txId}:`, e.message);
-      }).finally(() => {
-        activePollTxIds.delete(txId);
-      });
-    }, 1e3);
-  }
-  async function resumePendingTransferPolls() {
-    try {
-      const tokens = await store.listTokens();
-      for (const t of tokens) {
-        if (t.status === "pending_transfer" && t.transferTxId) {
-          pollTransferConfirmation(t.transferTxId, t.tokenId);
-        }
-      }
-    } catch {
-    }
-  }
-  async function silentCheckIncoming() {
-    try {
-      const imported = await builder.checkIncomingTokens();
-      if (imported.length > 0) {
-        setText("incoming-status", `Auto-imported ${imported.length} token(s)`);
-        await refreshTokenList();
-        if (proofPollTimeoutId) clearTimeout(proofPollTimeoutId);
-        startProofPolling();
-      }
-    } catch {
-    }
-  }
-  async function refreshTokenList() {
-    let tokens = (await store.listTokens()).sort((a, b) => {
-      const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return db - da;
-    });
-    tokens = tokens.filter((t) => {
-      if (t.status === "transferred") return false;
-      if (t.status === "flushed" && !t.flushedAt) return false;
-      return true;
-    });
-    let fungibleTokens = (await store.listFungibleTokens()).sort((a, b) => {
-      const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return db - da;
-    });
-    const container = el("token-list");
-    if (!container) return;
-    if (tokens.length === 0 && fungibleTokens.length === 0) {
-      container.innerHTML = '<p class="muted">No tokens yet. Mint one above.</p>';
-      return;
-    }
-    const fungibleHtml = fungibleTokens.map((ft) => renderFungibleCard(ft)).join("");
-    const groups = /* @__PURE__ */ new Map();
-    for (const t of tokens) {
-      const key = t.genesisTxId;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(t);
-    }
-    for (const group of groups.values()) {
-      group.sort((a, b) => a.genesisOutputIndex - b.genesisOutputIndex);
-    }
-    const nftHtml = Array.from(groups.entries()).map(([genesisTxId, group]) => {
-      if (group.length === 1) {
-        return renderTokenCard(group[0]);
-      }
-      const first = group[0];
-      const rules = decodeTokenRules(first.tokenRules);
-      if (rules.divisibility > 0) {
-        return renderFragmentCard(genesisTxId, group, rules);
-      }
-      const selectId = `sel-${genesisTxId.slice(0, 12)}`;
-      const detailId = `detail-${genesisTxId.slice(0, 12)}`;
-      const options = group.map(
-        (t) => `<option value="${t.tokenId}">NFT #${t.genesisOutputIndex} ${t.status !== "active" ? "- " + t.status : ""}</option>`
-      ).join("");
-      const activeCount = group.filter((t) => t.status === "active").length;
-      return `
-    <details class="token-card" style="border:1px solid #30363d;border-radius:6px;padding:0;margin-bottom:8px;">
-      <summary style="cursor:pointer;padding:12px;background:#0d1117;border-radius:6px;display:flex;align-items:center;gap:8px;user-select:none;list-style:none;border-bottom:1px solid #30363d;">
-        <span style="font-weight:bold;flex:1;">${escHtml(first.tokenName)}</span>
-        <span class="badge badge-active">${activeCount}/${group.length}</span>
-        <span style="font-size:0.8em;color:#8b949e;margin-left:auto;">\u25BC</span>
-      </summary>
-      <div style="padding:12px;">
-        <div class="token-field"><span class="label">Genesis TXID:</span> <code class="selectable">${genesisTxId}</code></div>
-        <div class="token-field"><span class="label">Rules:</span> ${renderRules(first.tokenRules)}</div>
-        <div class="token-field" style="margin-top:6px;">
-          <span class="label">Select token:</span>
-          <select id="${selectId}" onchange="window._selectGroupToken('${genesisTxId.slice(0, 12)}', this.value)" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:4px 8px;border-radius:4px;width:100%;">
-            ${options}
-          </select>
-        </div>
-        <div id="${detailId}" style="margin-top:12px;">${renderTokenDetail(first)}</div>
-      </div>
-    </details>`;
-    }).join("");
-    container.innerHTML = fungibleHtml + nftHtml;
-  }
-  function fragmentLabel(index, fragsPerWhole, wholeTokens) {
-    const nftNum = Math.ceil(index / fragsPerWhole);
-    const pieceNum = (index - 1) % fragsPerWhole + 1;
-    if (wholeTokens === 1) return `Piece ${pieceNum}/${fragsPerWhole}`;
-    return `NFT ${nftNum}, piece ${pieceNum}/${fragsPerWhole}`;
-  }
-  function formatFragmentIndices(indices, fragsPerWhole, wholeTokens) {
-    if (indices.length === 0) return "(none)";
-    if (indices.length > 60) {
-      return `${indices.length} pieces`;
-    }
-    if (wholeTokens === 1) {
-      return indices.map((i) => `piece ${(i - 1) % fragsPerWhole + 1}`).join(", ");
-    }
-    const byNft = /* @__PURE__ */ new Map();
-    for (const i of indices) {
-      const nftNum = Math.ceil(i / fragsPerWhole);
-      if (!byNft.has(nftNum)) byNft.set(nftNum, []);
-      byNft.get(nftNum).push((i - 1) % fragsPerWhole + 1);
-    }
-    const parts = [];
-    for (const [nftNum, pieces] of byNft) {
-      if (pieces.length === fragsPerWhole) {
-        parts.push(`NFT ${nftNum} (complete)`);
-      } else {
-        parts.push(`NFT ${nftNum}: ${pieces.map((p) => `${p}/${fragsPerWhole}`).join(", ")}`);
-      }
-    }
-    return parts.join(" | ");
-  }
-  function renderFragmentCard(genesisTxId, group, rules) {
-    const first = group[0];
-    const fragsPerWhole = rules.divisibility;
-    const totalFragments = rules.supply * fragsPerWhole;
-    const wholeTokens = rules.supply;
-    const activeFragments = group.filter((t) => t.status === "active");
-    const pendingFragments = group.filter((t) => t.status === "pending_transfer");
-    const transferredFragments = group.filter((t) => t.status === "transferred");
-    const heldCount = activeFragments.length;
-    const heldWholes = Math.floor(heldCount / fragsPerWhole);
-    const heldRemainder = heldCount % fragsPerWhole;
-    const heldDisplay = heldRemainder > 0 ? `${heldWholes} ${heldRemainder}/${fragsPerWhole}` : `${heldWholes}`;
-    const pct = totalFragments > 0 ? Math.round(heldCount / totalFragments * 100) : 0;
-    const heldIndices = activeFragments.map((t) => t.genesisOutputIndex).sort((a, b) => a - b);
-    const ownedIndices = new Set(group.map((t) => t.genesisOutputIndex));
-    const missingIndices = [];
-    for (let i = 1; i <= totalFragments; i++) {
-      if (!ownedIndices.has(i)) missingIndices.push(i);
-    }
-    const attrsDisplay = renderHexField(first.tokenAttributes, first);
-    const genKey = genesisTxId.slice(0, 12);
-    const barColor = pct === 100 ? "#238636" : pct > 0 ? "#d29922" : "#da3633";
-    const completionBar = `<div style="background:#21262d;border-radius:3px;height:8px;margin:6px 0;overflow:hidden;"><div style="background:${barColor};height:100%;width:${pct}%;transition:width 0.3s;"></div></div>`;
-    const isFlushed = first.status === "flushed";
-    const bgColor = isFlushed ? "#1a0d0d" : "#0d1117";
-    const borderColor = isFlushed ? "#663333" : "#30363d";
-    const flushedNotice = isFlushed ? `<span style="font-size:0.7em;color:#da3633;font-weight:bold;margin-left:8px;">\u26A0 FLUSHED</span>` : "";
-    return `
-    <details class="token-card" style="border:1px solid ${borderColor};border-radius:6px;padding:0;margin-bottom:8px;${isFlushed ? "opacity:0.75;" : ""}">
-      <summary style="cursor:pointer;padding:12px;background:${bgColor};border-radius:6px;display:flex;align-items:center;gap:12px;user-select:none;list-style:none;border-bottom:1px solid ${borderColor};">
-        <span style="font-weight:bold;flex:1;${isFlushed ? "opacity:0.6;" : ""}">${escHtml(first.tokenName)}</span>
-        ${flushedNotice}
-        <span class="badge ${pct === 100 ? "badge-active" : "badge-pending"}">${heldDisplay} / ${wholeTokens}</span>
-        <div style="width:80px;height:6px;background:#21262d;border-radius:3px;overflow:hidden;">
-          <div style="background:${barColor};height:100%;width:${pct}%;transition:width 0.3s;"></div>
-        </div>
-        <span style="font-size:0.8em;color:#8b949e;margin-left:auto;">\u25BC</span>
-      </summary>
-      <div style="padding:12px;border-top:1px solid ${borderColor};">
-        <div class="token-field"><span class="label">Genesis TXID:</span> <code class="selectable">${genesisTxId}</code></div>
-        <div class="token-field"><span class="label">Type:</span> Divisible token (${wholeTokens} tokens \xD7 ${fragsPerWhole} fragments = ${totalFragments} total pieces)</div>
-        <div class="token-field"><span class="label">Completion:</span> ${heldCount}/${totalFragments} pieces (${heldWholes} complete NFT${heldWholes !== 1 ? "s" : ""}${heldRemainder > 0 ? ` + ${heldRemainder}/${fragsPerWhole} pieces` : ""}) ${pct}%</div>
-        ${completionBar}
-        <div class="token-field"><span class="label">Held:</span> <span style="color:#3fb950;">${formatFragmentIndices(heldIndices, fragsPerWhole, wholeTokens)}</span></div>
-        ${missingIndices.length > 0 ? `<div class="token-field"><span class="label">Missing:</span> <span class="muted">${formatFragmentIndices(missingIndices, fragsPerWhole, wholeTokens)}</span></div>` : ""}
-        ${pendingFragments.length > 0 ? `<div class="token-field"><span class="label">Pending:</span> <span style="color:#d29922;">${formatFragmentIndices(pendingFragments.map((t) => t.genesisOutputIndex).sort((a, b) => a - b), fragsPerWhole, wholeTokens)}</span></div>` : ""}
-        ${transferredFragments.length > 0 ? `<div class="token-field"><span class="label">Sent:</span> <span class="muted">${formatFragmentIndices(transferredFragments.map((t) => t.genesisOutputIndex).sort((a, b) => a - b), fragsPerWhole, wholeTokens)}</span></div>` : ""}
-        <div class="token-field"><span class="label">Attributes:</span> ${attrsDisplay}</div>
-        <div class="token-field"><span class="label">Rules:</span> ${renderRules(first.tokenRules)}</div>
-        ${isFlushed ? `<div class="token-field"><span class="label">Flushed:</span> <span style="color:#da3633;">${first.flushedAt ? formatDate(first.flushedAt) : "Yes"}</span></div>` : ""}
-        <div class="token-actions" style="flex-direction:column;align-items:stretch;margin-top:12px;${isFlushed ? "opacity:0.6;" : ""}">
-          ${heldCount > 0 ? `
-          <div class="row" style="gap:6px;">
-            <input id="frag-amt-${genKey}" type="number" min="1" max="${heldCount}" value="1" style="width:80px;margin:0;" />
-            <button onclick="window._transferFragments('${genesisTxId}', '${genKey}')">Transfer Fragments</button>
-            <button onclick="window._verifyToken('${activeFragments[0].tokenId}')">Verify</button>
-          </div>
-          <span class="arch-note">Send 1-${heldCount} fragments to a recipient. Fragments are sent lowest-numbered first.</span>
-          ` : ""}
-          <div class="row" style="gap:6px;">
-            <a href="https://whatsonchain.com/tx/${genesisTxId}" target="_blank" rel="noopener">View Genesis TX</a>
-          </div>
-        </div>
-        <details style="margin-top:12px;" ontoggle="if(this.open){var s=document.getElementById('fsel-${genKey}');if(s){var i=document.getElementById('transfer-token-id');if(i){var o=s.querySelector('option:not([data-pending])');if(o)i.value=o.value;}}}"><summary class="muted" style="cursor:pointer;font-size:0.85em;">Show individual fragment details</summary>
-          <div style="margin-top:6px;">
-            <select id="fsel-${genKey}" onchange="window._selectGroupToken('fdet-${genKey}', this.value)" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:4px 8px;border-radius:4px;width:100%;margin-bottom:6px;">
-              ${group.map((t) => `<option value="${t.tokenId}"${t.status !== "active" ? " data-pending" : ""}>Fragment #${t.genesisOutputIndex} (${fragmentLabel(t.genesisOutputIndex, fragsPerWhole, wholeTokens)}) ${t.status !== "active" ? "- " + t.status : ""}</option>`).join("")}
-            </select>
-            <div id="fdet-${genKey}">${renderTokenDetail(first)}</div>
-          </div>
-        </details>
-      </div>
-    </details>`;
-  }
-  function renderFungibleCard(ft) {
-    const spendableUtxos = ft.utxos.filter((u) => u.status === "active" || u.status === "pending");
-    const pendingTransferUtxos = ft.utxos.filter((u) => u.status === "pending_transfer");
-    const genKey = ft.genesisTxId.slice(0, 12);
-    const regularUtxos = spendableUtxos.filter((u) => {
-      const decoded = u.stateData ? tryDecodeHex(u.stateData) : "";
-      return !decoded || decoded === "00";
-    });
-    const messageUtxos = spendableUtxos.filter((u) => {
-      const decoded = u.stateData ? tryDecodeHex(u.stateData) : "";
-      return decoded && decoded !== "00";
-    });
-    const regularBalance = regularUtxos.reduce((sum, u) => sum + u.satoshis, 0);
-    const messageBalance = messageUtxos.reduce((sum, u) => sum + u.satoshis, 0);
-    const totalBalance = regularBalance + messageBalance;
-    const pendingTransferBalance = pendingTransferUtxos.reduce((sum, u) => sum + u.satoshis, 0);
-    const messagesHtml = messageUtxos.length > 0 ? `
-      <details style="margin-top:12px;padding-top:12px;border-top:1px solid #30363d;">
-        <summary style="cursor:pointer;font-weight:bold;color:#58a6ff;margin-bottom:8px;">\u{1F4E8} Messages (${messageUtxos.length})</summary>
-        ${messageUtxos.map((u) => {
-      const stateDecoded = tryDecodeHex(u.stateData);
-      return `
-          <div style="padding:10px;margin-bottom:8px;background:#161b22;border:1px solid #30363d;border-radius:6px;">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <strong style="color:#3fb950;">${u.satoshis.toLocaleString()} tokens</strong>
-              ${u.receivedAt ? `<span class="muted" style="font-size:0.8em;">${formatDate(u.receivedAt)}</span>` : ""}
-            </div>
-            <pre style="margin:0 0 8px 0;padding:8px;background:#0d1117;border-radius:4px;white-space:pre-wrap;word-break:break-word;font-size:0.9em;color:#c9d1d9;">${escHtml(stateDecoded)}</pre>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-              <button onclick="window._forwardMessage('${ft.tokenId}', '${u.txId}', ${u.outputIndex})" style="font-size:0.85em;">Forward</button>
-              <a href="https://whatsonchain.com/tx/${u.txId}" target="_blank" rel="noopener" style="font-size:0.8em;">View TX</a>
-              <code class="muted" style="font-size:0.7em;">${u.txId.slice(0, 12)}...:${u.outputIndex}</code>
-            </div>
-          </div>`;
-    }).join("")}
-      </details>` : "";
-    return `
-    <details class="token-card" style="border-color:#238636;border:1px solid #238636;border-radius:6px;padding:0;margin-bottom:8px;">
-      <summary style="cursor:pointer;padding:12px;background:rgba(35,134,54,0.1);border-radius:6px;display:flex;align-items:center;gap:8px;user-select:none;list-style:none;border-bottom:1px solid #238636;">
-        <span style="font-weight:bold;flex:1;">${escHtml(ft.tokenName)}</span>
-        <span class="badge badge-active">Fungible</span>
-        <span style="color:#3fb950;font-weight:bold;">${totalBalance.toLocaleString()} \u{1FA99}</span>
-        <span style="font-size:0.8em;color:#8b949e;margin-left:auto;">\u25BC</span>
-      </summary>
-      <div style="padding:12px;">
-        <div class="token-field"><span class="label">Token ID:</span> <code class="selectable">${ft.tokenId}</code></div>
-        <div class="token-field"><span class="label">Genesis TXID:</span> <code class="selectable">${ft.genesisTxId}</code></div>
-        <div class="token-field"><span class="label">Total tokens:</span> <strong style="color:#3fb950;font-size:1.1em;">${totalBalance.toLocaleString()}</strong></div>
-        <div class="token-field"><span class="label">\u251C Available:</span> ${regularBalance.toLocaleString()}</div>
-        <div class="token-field"><span class="label">\u2514 In messages:</span> ${messageBalance.toLocaleString()}${messageUtxos.length > 0 ? ` (${messageUtxos.length})` : ""}</div>
-        ${pendingTransferBalance > 0 ? `<div class="token-field"><span class="label">Pending Transfer:</span> <span style="color:#d29922;">${pendingTransferBalance.toLocaleString()} tokens</span></div>` : ""}
-        ${ft.createdAt ? `<div class="token-field"><span class="label">Created:</span> ${formatDate(ft.createdAt)}</div>` : ""}
-        <div class="token-actions" style="flex-direction:column;align-items:stretch;margin-top:12px;">
-          <div class="row" style="gap:6px;">
-            <input id="fungible-send-${genKey}" type="number" min="1" max="${regularBalance}" value="${Math.min(100, regularBalance)}" placeholder="Amount" style="width:120px;margin:0;" />
-            <button onclick="window._transferFungible('${ft.tokenId}', '${genKey}')"${regularBalance === 0 ? ' disabled title="No regular balance available"' : ""}>Send</button>
-            <button onclick="window._verifyFungible('${ft.tokenId}')">Verify</button>
-          </div>
-          <div class="row" style="gap:6px; margin-top:4px;">
-            <textarea id="fungible-state-${genKey}" placeholder="State data (mutable, optional)" rows="3" style="flex:1;margin:0;resize:vertical;"></textarea>
-          </div>
-          <span class="arch-note">Send from available balance. To send a message UTXO, use "Forward" below.</span>
-          <div class="row" style="gap:6px; margin-top:6px;">
-            <a href="https://whatsonchain.com/tx/${ft.genesisTxId}" target="_blank" rel="noopener">View Genesis TX</a>
-          </div>
-        </div>
-        ${messagesHtml}
-        <details style="margin-top:12px;"><summary class="muted" style="cursor:pointer;font-size:0.85em;">Show all UTXO details (${ft.utxos.length})</summary>
-          <div style="margin-top:6px;font-size:0.85em;">
-            ${ft.utxos.map((u) => {
-      const stateDecoded = u.stateData ? tryDecodeHex(u.stateData) : "";
-      const hasStateData = stateDecoded && stateDecoded !== "00";
-      return `
-              <div style="padding:8px 0;border-bottom:1px solid #21262d;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <span class="badge ${u.status === "active" ? "badge-active" : u.status === "pending_transfer" ? "badge-pending" : "badge-transferred"}">${u.status}</span>${u.confirmationStatus === "unconfirmed" ? '<span class="badge badge-unconfirmed" title="Not yet confirmed">\u23F3</span>' : ""}
-                  <strong>${u.satoshis.toLocaleString()} tokens</strong>
-                  ${u.receivedAt ? `<span class="muted" style="font-size:0.8em;">${formatDate(u.receivedAt)}</span>` : ""}
-                  <button onclick="window._removeUtxo('${ft.tokenId}', '${u.txId}', ${u.outputIndex})" style="margin-left:auto;font-size:0.7em;padding:2px 6px;background:#da3633;" title="Remove this UTXO from basket">\xD7</button>
-                </div>
-                <code class="muted" style="font-size:0.8em;display:block;margin-top:4px;">${u.txId}:${u.outputIndex}</code>
-                ${hasStateData ? `
-                <div style="margin-top:6px;padding:6px;background:#161b22;border:1px solid #30363d;border-radius:4px;">
-                  <span class="muted" style="font-size:0.75em;">State Data:</span>
-                  <pre style="margin:4px 0 0 0;white-space:pre-wrap;word-break:break-word;font-size:0.85em;color:#c9d1d9;">${escHtml(stateDecoded)}</pre>
-                </div>` : ""}
-              </div>`;
-    }).join("")}
-          </div>
-        </details>
-      </div>
-    </details>`;
-  }
-  function renderTokenCard(t) {
-    const statusBadge = renderStatusBadge(t.status, t.confirmationStatus);
-    const actions = renderTokenActions(t);
-    const rules = renderRules(t.tokenRules);
-    const attrsDisplay = renderHexField(t.tokenAttributes, t);
-    const stateDisplay = renderStateData(t.stateData, t);
-    const r2 = decodeTokenRules(t.tokenRules);
-    const isFragment = r2.divisibility > 0 && r2.supply > 0;
-    const totalFragments = isFragment ? r2.supply * r2.divisibility : r2.supply;
-    const nftLabel = isFragment ? ` Fragment #${t.genesisOutputIndex} (${fragmentLabel(t.genesisOutputIndex, r2.divisibility, r2.supply)})` : r2.supply > 1 ? ` NFT #${t.genesisOutputIndex}` : "";
-    const fragmentInfo = isFragment ? `<div class="token-field"><span class="label">Fragment:</span> ${fragmentLabel(t.genesisOutputIndex, r2.divisibility, r2.supply)} -- piece #${t.genesisOutputIndex} of ${totalFragments} total</div>` : "";
-    let attrsIconHtml = "";
-    if (t.tokenAttributes && t.tokenAttributes !== "00") {
-      const meta = getFileMeta(t.tokenAttributes.length === 64 ? t.tokenAttributes : "");
-      if (meta) {
-        attrsIconHtml = `<span style="margin-left:8px;">${getMimeTypeIcon(meta.mimeType)}</span>`;
-      }
-    }
-    const isFlushed = t.status === "flushed";
-    const bgColor = isFlushed ? "#1a0d0d" : "#0d1117";
-    const borderColor = isFlushed ? "#663333" : "#30363d";
-    const nameStyling = isFlushed ? "opacity:0.6;" : "";
-    const flushedNotice = isFlushed ? `<span style="font-size:0.7em;color:#da3633;font-weight:bold;margin-left:8px;">\u26A0 FLUSHED</span>` : "";
-    return `
-    <details class="token-card ${t.status === "transferred" ? "token-transferred" : ""} ${t.status === "pending_transfer" ? "token-pending" : ""}" style="border:1px solid ${borderColor};border-radius:6px;padding:0;margin-bottom:8px;${isFlushed ? "opacity:0.75;" : ""}">
-      <summary style="cursor:pointer;padding:12px;background:${bgColor};border-radius:6px;display:flex;align-items:center;gap:8px;user-select:none;list-style:none;border-bottom:1px solid ${borderColor};">
-        <span style="font-weight:bold;flex:1;${nameStyling}">${escHtml(t.tokenName)}${nftLabel}</span>
-        ${statusBadge}
-        ${flushedNotice}
-        ${attrsIconHtml}
-        <span style="font-size:0.8em;color:#8b949e;margin-left:auto;">\u25BC</span>
-      </summary>
-      <div style="padding:12px;border-top:1px solid ${borderColor};">
-        <div class="token-field"><span class="label">Token ID:</span> <code class="selectable">${t.tokenId}</code></div>
-        ${fragmentInfo}
-        ${t.tokenScript ? `<div class="token-field"><span class="label">Script:</span> <code class="muted" style="font-size:0.8em;">${escHtml(t.tokenScript)}</code></div>` : ""}
-        <div class="token-field"><span class="label">Rules:</span> ${rules}</div>
-        <div class="token-field"><span class="label">Attributes:</span> ${attrsDisplay}</div>
-        <div class="token-field"><span class="label">State Data:</span> ${stateDisplay}</div>
-        <div class="token-field"><span class="label">Current TXID:</span> <code class="selectable">${t.currentTxId}</code></div>
-        <div class="token-field"><span class="label">Output:</span> ${t.currentOutputIndex}</div>
-        <div class="token-field"><span class="label">Sats:</span> ${t.satoshis}</div>
-        ${t.createdAt ? `<div class="token-field"><span class="label">Created:</span> ${formatDate(t.createdAt)}</div>` : ""}
-        ${t.feePaid !== void 0 ? `<div class="token-field"><span class="label">Fee:</span> ${t.feePaid} sats</div>` : ""}
-        ${t.transferTxId ? `<div class="token-field"><span class="label">Transfer TXID:</span> <code class="selectable">${t.transferTxId}</code></div>` : ""}
-        ${isFlushed ? `<div class="token-field"><span class="label">Flushed:</span> <span style="color:#da3633;">${t.flushedAt ? formatDate(t.flushedAt) : "Yes"}</span></div>` : ""}
-        <div class="token-actions" ${isFlushed ? 'style="opacity:0.6;"' : ""}>${actions}</div>
-      </div>
-    </details>`;
-  }
-  function renderTokenDetail(t) {
-    const statusBadge = renderStatusBadge(t.status, t.confirmationStatus);
-    const actions = renderTokenActions(t);
-    const attrsDisplay = renderHexField(t.tokenAttributes, t);
-    const stateDisplay = renderStateData(t.stateData, t);
-    const r2 = decodeTokenRules(t.tokenRules);
-    const isFragment = r2.divisibility > 0 && r2.supply > 0;
-    const fragLine = isFragment ? `<div class="token-field"><span class="label">Fragment:</span> ${fragmentLabel(t.genesisOutputIndex, r2.divisibility, r2.supply)}</div>` : r2.supply > 1 ? `<div class="token-field"><span class="label">NFT #:</span> ${t.genesisOutputIndex}</div>` : "";
-    return `
-    <div class="${t.status === "transferred" ? "token-transferred" : ""} ${t.status === "pending_transfer" ? "token-pending" : ""}">
-      <div class="token-field"><span class="label">Status:</span> ${statusBadge}</div>
-      ${fragLine}
-      <div class="token-field"><span class="label">Token ID:</span> <code class="selectable">${t.tokenId}</code></div>
-      ${t.tokenScript ? `<div class="token-field"><span class="label">Script:</span> <code class="muted" style="font-size:0.8em;">${escHtml(t.tokenScript)}</code></div>` : ""}
-      <div class="token-field"><span class="label">Attributes:</span> ${attrsDisplay}</div>
-      <div class="token-field"><span class="label">State Data:</span> ${stateDisplay}</div>
-      <div class="token-field"><span class="label">Current TXID:</span> <code class="selectable">${t.currentTxId}</code></div>
-      <div class="token-field"><span class="label">Output:</span> ${t.currentOutputIndex}</div>
-      <div class="token-field"><span class="label">Sats:</span> ${t.satoshis}</div>
-      ${t.transferTxId ? `<div class="token-field"><span class="label">Transfer TXID:</span> <code class="selectable">${t.transferTxId}</code></div>` : ""}
-      <div class="token-actions">${actions}</div>
-    </div>`;
-  }
-  function renderStatusBadge(status, confirmationStatus) {
-    let badge = "";
-    switch (status) {
-      case "active":
-        if (confirmationStatus === "unconfirmed") {
-          badge = '<span class="badge badge-active">Active</span><span class="badge badge-unconfirmed" title="Transaction not yet confirmed">\u23F3 Unconfirmed</span>';
-        } else {
-          badge = '<span class="badge badge-active">Active</span>';
-        }
-        break;
-      case "pending_transfer":
-        badge = '<span class="badge badge-pending">Pending Transfer</span>';
-        break;
-      case "transferred":
-        badge = '<span class="badge badge-transferred">Transferred</span>';
-        break;
-      case "flushed":
-        badge = '<span class="badge" style="background:#da3633;">Flushed</span>';
-        break;
-      case "recovered":
-        badge = '<span class="badge" style="background:#238636;">Recovered</span>';
-        break;
-      default:
-        badge = "";
-    }
-    return badge;
-  }
-  function renderTokenActions(t) {
-    const parts = [];
-    const r2 = decodeTokenRules(t.tokenRules);
-    const isFragment = r2.divisibility > 0;
-    if (t.status === "active") {
-      parts.push(`<button onclick="window._selectForTransfer('${t.tokenId}')">Select for Transfer</button>`);
-      if (isFragment) {
-        parts.push(`<button onclick="window._sendSingleFragment('${t.tokenId}', ${t.genesisOutputIndex})">Send ${fragmentLabel(t.genesisOutputIndex, r2.divisibility, r2.supply)}</button>`);
-      }
-      parts.push(`<button onclick="window._verifyToken('${t.tokenId}')">Verify</button>`);
-    }
-    if (t.status === "active") {
-      parts.push(`<button onclick="window._openFlushDialog('${t.tokenId}')" style="background:#da3633;">Flush Token</button>`);
-    }
-    if (t.status === "flushed") {
-      parts.push(`<button onclick="window._recoverFlushedToken('${t.tokenId}')" style="background:#238636;">Recover</button>`);
-    }
-    if (t.status === "pending_transfer") {
-      parts.push(`<button onclick="window._confirmTransfer('${t.tokenId}')" class="btn-confirm">Confirm Sent</button>`);
-    }
-    if (t.currentTxId) {
-      parts.push(`<a href="https://whatsonchain.com/tx/${t.currentTxId}" target="_blank" rel="noopener">View TX</a>`);
-    }
-    if (t.transferTxId && t.transferTxId !== t.currentTxId) {
-      parts.push(`<a href="https://whatsonchain.com/tx/${t.transferTxId}" target="_blank" rel="noopener">View Transfer TX</a>`);
-    }
-    return parts.join("\n");
-  }
-  function renderRules(rulesHex) {
-    if (!rulesHex || rulesHex.length !== 16) return `<code>${escHtml(rulesHex || "(none)")}</code>`;
-    const r2 = decodeTokenRules(rulesHex);
-    const divLabel = r2.divisibility > 0 ? `Divisibility=${r2.divisibility} (${r2.supply}\xD7${r2.divisibility}=${r2.supply * r2.divisibility} fragments)` : `Divisibility=0`;
-    return `Supply=${r2.supply}, ${divLabel}, Restrictions=0x${r2.restrictions.toString(16).padStart(4, "0")}, Version=${r2.version}`;
-  }
-  function renderHexField(hex, token) {
-    if (!hex || hex === "00") return '<span class="muted">(none)</span>';
-    if (hex.length === 64 && token) {
-      const meta = getFileMeta(hex);
-      const icon = meta ? getMimeTypeIcon(meta.mimeType) : "\u{1F4CE}";
-      const label = meta ? `${icon} ${meta.fileName}` : `${icon} View File`;
-      return `<code class="muted">${escHtml(hex)}</code> <button onclick="window._viewFile('${token.genesisTxId}', '${hex}')" style="font-size:0.8em; padding:2px 8px; background:#30363d;">${label}</button>`;
-    }
-    try {
-      const bytes2 = new Uint8Array(hex.match(/.{1,2}/g).map((b) => parseInt(b, 16)));
-      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes2);
-      if (/^[\x20-\x7e\t\n\r]+$/.test(decoded)) {
-        return `"${escHtml(decoded)}"<br><code class="muted">${escHtml(hex)}</code>`;
-      }
-    } catch {
-    }
-    return `<code>${escHtml(hex)}</code>`;
-  }
-  function renderStateData(stateHex, token) {
-    if (!stateHex || stateHex === "00") return '<span class="muted">(empty)</span>';
-    const { text, fileHash } = decodeStateData(stateHex);
-    let html = "";
-    if (text) {
-      html += `"${escHtml(text)}"<br>`;
-    }
-    if (fileHash && token) {
-      const meta = getFileMeta(fileHash);
-      const icon = meta ? getMimeTypeIcon(meta.mimeType) : "\u{1F4CE}";
-      const label = meta ? `${icon} ${meta.fileName}` : `${icon} View File`;
-      html += `<button onclick="window._viewFile('${token.genesisTxId}', '${fileHash}', '${token.currentTxId}')" style="font-size:0.8em; padding:2px 8px; background:#30363d; margin-top:4px;">${label}</button><br>`;
-    }
-    html += `<code class="muted">${escHtml(stateHex)}</code>`;
-    return html;
-  }
-  async function handleSend() {
-    const address = inputVal("send-address");
-    const amountStr = inputVal("send-amount");
-    if (!address || !amountStr) {
-      setResult("send-result", "Enter both a recipient address and amount.");
-      return;
-    }
-    const amount = parseInt(amountStr, 10);
-    if (!amount || amount < 1) {
-      setResult("send-result", "Amount must be at least 1 satoshi.");
-      return;
-    }
-    const feeRate = parseInt(inputVal("fee-rate"), 10);
-    if (feeRate > 0) builder.feePerKb = feeRate;
-    setResult("send-result", "Building transaction...");
-    try {
-      const result = await builder.sendSats(address, amount);
-      setResult("send-result", [
-        "Sent!",
-        `TXID: ${result.txId}`,
-        `Amount: ${amount} sats`,
-        `Fee: ${result.fee} sats`,
-        `View: https://whatsonchain.com/tx/${result.txId}`
-      ].join("\n"));
-      await refreshBalance();
-    } catch (e) {
-      setResult("send-result", `Error: ${e.message}`);
-    }
-  }
-  function toggleFieldMode(field) {
-    fieldModes[field] = fieldModes[field] === "text" ? "hex" : "text";
-    const btn = el(`btn-${field}-mode`);
-    if (btn) btn.textContent = fieldModes[field] === "text" ? "Text" : "Hex";
-    const hint = el("field-mode-hint");
-    if (hint) hint.textContent = Object.values(fieldModes).every((m) => m === "text") ? "Text mode: input is UTF-8 encoded to hex. Toggle individual fields for raw hex input." : "Some fields in hex mode: raw hex bytes expected. Toggle to switch back to text.";
-  }
-  function toggleMintMode() {
-    mintMode = mintMode === "fungible" ? "nft" : "fungible";
-    const btn = el("btn-mint-mode");
-    const hint = el("mint-mode-hint");
-    const fungibleFields = el("fungible-fields");
-    const nftFields = el("nft-fields");
-    if (mintMode === "fungible") {
-      if (btn) {
-        btn.textContent = "Fungible";
-        btn.style.background = "#238636";
-      }
-      if (hint) hint.textContent = "Fungible: amount = satoshis, all UTXOs share same Token ID";
-      if (fungibleFields) fungibleFields.style.display = "";
-      if (nftFields) nftFields.style.display = "none";
-    } else {
-      if (btn) {
-        btn.textContent = "NFT";
-        btn.style.background = "#6e40c9";
-      }
-      if (hint) hint.textContent = "NFT: unique Token IDs, supports supply/divisibility/file attachments";
-      if (fungibleFields) fungibleFields.style.display = "none";
-      if (nftFields) nftFields.style.display = "";
-    }
-  }
-  function textToHex(text) {
-    return Array.from(new TextEncoder().encode(text)).map((b) => b.toString(16).padStart(2, "0")).join("");
-  }
-  function encodeStateData(text, fileHash) {
-    const escapedText = text.replace(/\|/g, "~|~");
-    const encodedText = escapedText ? textToHex(escapedText) : "";
-    if (fileHash) {
-      return encodedText ? `${encodedText}7c${fileHash}` : `7c${fileHash}`;
-    }
-    return encodedText;
-  }
-  function decodeStateData(stateHex) {
-    if (!stateHex || stateHex === "00") {
-      return { text: "" };
-    }
-    const parts = stateHex.split(/(?<!7e)7c(?!7e)/);
-    if (parts.length === 1) {
-      try {
-        const bytes2 = new Uint8Array(stateHex.match(/.{2}/g)?.map((b) => parseInt(b, 16)) || []);
-        let decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes2);
-        decoded = decoded.replace(/~\|~/g, "|");
-        return { text: decoded };
-      } catch {
-        return { text: "" };
-      }
-    }
-    if (parts.length === 2) {
-      const textHex = parts[0];
-      const fileHash = parts[1];
-      if (!/^[0-9a-f]{64}$/i.test(fileHash)) {
-        try {
-          const bytes2 = new Uint8Array(stateHex.match(/.{2}/g)?.map((b) => parseInt(b, 16)) || []);
-          let decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes2);
-          decoded = decoded.replace(/~\|~/g, "|");
-          return { text: decoded };
-        } catch {
-          return { text: "" };
-        }
-      }
-      let text = "";
-      if (textHex) {
-        try {
-          const bytes2 = new Uint8Array(textHex.match(/.{2}/g)?.map((b) => parseInt(b, 16)) || []);
-          let decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes2);
-          text = decoded.replace(/~\|~/g, "|");
-        } catch {
-        }
-      }
-      return { text, fileHash };
-    }
-    try {
-      const bytes2 = new Uint8Array(stateHex.match(/.{2}/g)?.map((b) => parseInt(b, 16)) || []);
-      let decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes2);
-      decoded = decoded.replace(/~\|~/g, "|");
-      return { text: decoded };
-    } catch {
-      return { text: "" };
-    }
-  }
-  function tryDecodeHex(hex) {
-    if (!hex || hex === "00") return "";
-    const { text } = decodeStateData(hex);
-    return text || hex;
-  }
-  async function handleMint() {
-    const nameRaw = inputVal("token-name");
-    if (!nameRaw) {
-      setResult("mint-result", "Enter a token name.");
-      return;
-    }
-    const name = fieldModes.name === "text" ? nameRaw : new TextDecoder().decode(new Uint8Array(nameRaw.match(/.{1,2}/g)?.map((b) => parseInt(b, 16)) ?? []));
-    const feeRate = parseInt(inputVal("fee-rate"), 10);
-    if (feeRate > 0) builder.feePerKb = feeRate;
-    if (mintMode === "fungible") {
-      const initialSupply = parseInt(inputVal("fungible-supply"), 10) || 1e3;
-      if (initialSupply < 1) {
-        setResult("mint-result", "Initial supply must be at least 1 satoshi.");
-        return;
-      }
-      setResult("mint-result", `Minting fungible token with ${initialSupply} tokens...`);
-      try {
-        const result = await builder.createFungibleGenesis({
-          tokenName: name,
-          initialSupply
-        });
-        setResult("mint-result", [
-          "Fungible token minted!",
-          `TXID: ${result.txId}`,
-          `Token ID: ${result.tokenId}`,
-          `Initial supply: ${result.initialSupply} tokens`,
-          `View: https://whatsonchain.com/tx/${result.txId}`,
-          "",
-          "Polling for Merkle proof (may take ~10 min)..."
-        ].join("\n"));
-        await refreshTokenList();
-        await refreshBalance();
-        builder.pollForProof(result.tokenId, result.txId, (msg) => {
-          setResult("mint-result", [
-            `TXID: ${result.txId}`,
-            `Token ID: ${result.tokenId}`,
-            msg
-          ].join("\n"));
-        }).then((found) => {
-          if (found) refreshTokenList();
-        });
-      } catch (e) {
-        setResult("mint-result", `Error: ${e.message}`);
-      }
-      return;
-    }
-    const scriptRaw = inputVal("token-script");
-    const attrsRaw = inputVal("token-attrs");
-    const stateRaw = inputVal("token-state");
-    const supply = parseInt(inputVal("token-supply"), 10) || 1;
-    const divisibility = parseInt(inputVal("token-divisibility"), 10) || 0;
-    const restrictions = parseInt(inputVal("token-restrictions"), 10) || 0;
-    const rulesVersion = parseInt(inputVal("token-rules-version"), 10) || 1;
-    const attrs = attrsRaw ? fieldModes.attrs === "text" ? textToHex(attrsRaw) : attrsRaw : "00";
-    let stateData = "";
-    if (stateRaw) {
-      stateData = fieldModes.state === "text" ? textToHex(stateRaw) : stateRaw;
-    }
-    const fileInput = el("token-file");
-    const selectedFile = fileInput?.files?.[0];
-    let fileData;
-    if (selectedFile) {
-      if (selectedFile.size > 5e7) {
-        setResult("mint-result", "File too large. Max 50MB for on-chain storage.");
-        return;
-      }
-      const arrayBuf = await selectedFile.arrayBuffer();
-      fileData = {
-        bytes: new Uint8Array(arrayBuf),
-        mimeType: inferMimeType(selectedFile.name, selectedFile.type),
-        fileName: selectedFile.name
-      };
-    }
-    setResult("mint-result", fileData ? `Building genesis transaction with file (${(fileData.bytes.length / 1024).toFixed(1)} KB)...` : "Building genesis transaction...");
-    try {
-      const result = await builder.createGenesis({
-        tokenName: name,
-        tokenScript: scriptRaw || "",
-        attributes: fileData ? void 0 : attrs,
-        supply,
-        divisibility,
-        restrictions,
-        rulesVersion,
-        stateData,
-        fileData
-      });
-      if (fileData) {
-        const hashBytes = Hash_exports.sha256(Array.from(fileData.bytes));
-        const hash = Array.from(hashBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-        await fileCache.store(hash, fileData);
-        setFileMeta(hash, fileData.mimeType, fileData.fileName);
-      }
-      const count = result.tokenIds.length;
-      const idSummary = count === 1 ? `Token ID: ${result.tokenIds[0]}` : `Minted ${count} tokens (first: ${result.tokenIds[0].slice(0, 16)}...)`;
-      setResult("mint-result", [
-        "Genesis broadcast!",
-        `TXID: ${result.txId}`,
-        idSummary,
-        `View: https://whatsonchain.com/tx/${result.txId}`,
-        "",
-        "Polling for Merkle proof (may take ~10 min)..."
-      ].join("\n"));
-      await refreshTokenList();
-      await refreshBalance();
-      builder.pollForProof(result.tokenIds[0], result.txId, (msg) => {
-        setResult("mint-result", [
-          `TXID: ${result.txId}`,
-          idSummary,
-          msg
-        ].join("\n"));
-      }).then((found) => {
-        if (found) refreshTokenList();
-      });
-    } catch (e) {
-      setResult("mint-result", `Error: ${e.message}`);
-    }
-  }
-  async function handleTransfer() {
-    const tokenId = inputVal("transfer-token-id");
-    const recipient = inputVal("transfer-recipient");
-    const messageText = inputVal("transfer-message");
-    if (messageText) {
-      const messageHex = Array.from(new TextEncoder().encode(messageText)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      console.debug(`handleTransfer: Sending message "${messageText}" (${messageText.length} chars, ${messageHex.length} hex chars)`);
-    }
-    if (!tokenId || !recipient) {
-      setResult("transfer-result", "Enter both Token ID and recipient BSV address.");
-      return;
-    }
-    const feeRate = parseInt(inputVal("fee-rate"), 10);
-    if (feeRate > 0) builder.feePerKb = feeRate;
-    const transferFileInput = el("transfer-file");
-    const selectedFile = transferFileInput?.files?.[0];
-    let fileData;
-    if (selectedFile) {
-      if (selectedFile.size > 5e7) {
-        setResult("transfer-result", "File too large. Max 50MB for on-chain storage.");
-        return;
-      }
-      const arrayBuf = await selectedFile.arrayBuffer();
-      fileData = {
-        bytes: new Uint8Array(arrayBuf),
-        mimeType: inferMimeType(selectedFile.name, selectedFile.type),
-        fileName: selectedFile.name
-      };
-    }
-    setResult("transfer-result", fileData ? `Building transfer transaction with file (${(fileData.bytes.length / 1024).toFixed(1)} KB)...` : "Building transfer transaction...");
-    try {
-      const fungible = await store.getFungibleToken(tokenId);
-      if (fungible) {
-        setResult("transfer-result", [
-          'This is a fungible token. Use the "Send" button in the token card above.',
-          "",
-          `Token: ${fungible.tokenName}`,
-          `Balance: ${fungible.utxos.filter((u) => u.status === "active").reduce((s2, u) => s2 + u.satoshis, 0).toLocaleString()} tokens`
-        ].join("\n"));
-        return;
-      }
-      let newStateData;
-      if (fileData) {
-        const hashBytes = Hash_exports.sha256(Array.from(fileData.bytes));
-        const fileHash = Array.from(hashBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-        newStateData = encodeStateData(messageText || "", fileHash);
-      } else if (messageText) {
-        newStateData = encodeStateData(messageText);
-      }
-      const includeStateData = el("transfer-include-state")?.checked ?? false;
-      const result = await builder.createTransfer(tokenId, recipient, newStateData, fileData, includeStateData);
-      const updatedToken = await store.getToken(tokenId);
-      console.debug(`handleTransfer: Token ${tokenId.slice(0, 12)} status after createTransfer:`, updatedToken?.status);
-      if (fileData) {
-        const hashBytes = Hash_exports.sha256(Array.from(fileData.bytes));
-        const hash = Array.from(hashBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-        await fileCache.store(hash, fileData);
-        setFileMeta(hash, fileData.mimeType, fileData.fileName);
-      }
-      setResult("transfer-result", [
-        "Transfer broadcast!",
-        `TXID: ${result.txId}`,
-        fileData ? `File attached: ${fileData.fileName}` : "",
-        `View: https://whatsonchain.com/tx/${result.txId}`,
-        "",
-        "Token data is encoded on-chain. The recipient can click",
-        '"Check Incoming Tokens" to auto-import it.'
-      ].filter(Boolean).join("\n"));
-      if (transferFileInput) transferFileInput.value = "";
-      const transferClearBtn = el("btn-clear-transfer-file");
-      const transferFileInfo = el("transfer-file-info");
-      const transferMsgInput = el("transfer-message");
-      if (transferClearBtn) transferClearBtn.style.display = "none";
-      if (transferFileInfo) {
-        transferFileInfo.style.display = "none";
-        transferFileInfo.textContent = "";
-      }
-      if (transferMsgInput) transferMsgInput.disabled = false;
-      await refreshTokenList();
-      await refreshBalance();
-      pollTransferConfirmation(result.txId, result.tokenId);
-    } catch (e) {
-      setResult("transfer-result", `Error: ${e.message}`);
-    }
-  }
-  async function handleVerify() {
-    const tokenId = inputVal("verify-token-id");
-    if (!tokenId) {
-      setResult("verify-result", "Enter a Token ID.");
-      return;
-    }
-    setResult("verify-result", "Verifying...");
-    try {
-      const token = await store.getToken(tokenId);
-      const fungible = token ? null : await store.getFungibleToken(tokenId);
-      if (token && token.status === "transferred") {
-        setResult("verify-result", [
-          `Valid: false`,
-          `Reason: This token has been transferred away from your wallet and is no longer in your possession.`
-        ].join("\n"));
-        return;
-      }
-      if (fungible && fungible.utxos.every((u) => u.status === "transferred")) {
-        setResult("verify-result", [
-          `Valid: false`,
-          `Reason: All UTXOs of this fungible token have been transferred away.`
-        ].join("\n"));
-        return;
-      }
-      const result = await builder.verifyToken(tokenId);
-      setResult("verify-result", [
-        `Valid: ${result.valid}`,
-        `Reason: ${result.reason}`
-      ].join("\n"));
-    } catch (e) {
-      setResult("verify-result", `Error: ${e.message}`);
-    }
-  }
-  async function handleCheckIncoming() {
-    setText("incoming-status", "Scanning blockchain...");
-    try {
-      const imported = await builder.checkIncomingTokens((msg) => {
-        setText("incoming-status", msg);
-      });
-      if (imported.length > 0) {
-        await refreshTokenList();
-      }
-    } catch (e) {
-      setText("incoming-status", `Error: ${e.message}`);
-    }
-  }
-  function handleNewWallet() {
-    if (!confirm("This will generate a new key and clear all tokens. Continue?")) return;
-    localStorage.clear();
-    location.reload();
-  }
-  function handleRestoreWallet() {
-    const wif = inputVal("import-wif");
-    if (!wif) {
-      alert("Paste a WIF private key first.");
-      return;
-    }
-    try {
-      const testKey = PrivateKey.fromWif(wif);
-      testKey.toPublicKey();
-    } catch {
-      alert("Invalid WIF private key.");
-      return;
-    }
-    if (!confirm("This will replace the current wallet key and reload the page. Token data in storage will be preserved. Continue?")) return;
-    localStorage.setItem(WIF_KEY, wif);
-    location.reload();
-  }
-  window._selectGroupToken = async (genKey, tokenId) => {
-    const token = await store.getToken(tokenId);
-    if (!token) return;
-    const detailEl = el(genKey.startsWith("fdet-") ? genKey : `detail-${genKey}`);
-    if (detailEl) detailEl.innerHTML = renderTokenDetail(token);
-    if (token.status === "active") {
-      const transferInput = el("transfer-token-id");
-      if (transferInput) transferInput.value = tokenId;
-    }
-  };
-  window._selectForTransfer = (tokenId) => {
-    const input = el("transfer-token-id");
-    if (input) input.value = tokenId;
-    el("transfer-section")?.scrollIntoView({ behavior: "smooth", block: "center" });
-  };
-  window._transferFragments = async (genesisTxId, genKey) => {
-    const amtInput = el(`frag-amt-${genKey}`);
-    const count = parseInt(amtInput?.value ?? "1", 10);
-    if (!count || count < 1) {
-      setResult("transfer-result", "Enter a valid fragment count (minimum 1).");
-      return;
-    }
-    const recipient = inputVal("transfer-recipient");
-    if (!recipient) {
-      setResult("transfer-result", "Enter a recipient BSV address in the Transfer Token section below.");
-      el("transfer-recipient")?.focus();
-      return;
-    }
-    const tokens = await store.listTokens();
-    const activeFragments = tokens.filter((t) => t.genesisTxId === genesisTxId && t.status === "active").sort((a, b) => a.genesisOutputIndex - b.genesisOutputIndex);
-    if (count > activeFragments.length) {
-      setResult("transfer-result", `Only ${activeFragments.length} active fragment(s) available.`);
-      return;
-    }
-    const toSend = activeFragments.slice(0, count);
-    const feeRate = parseInt(inputVal("fee-rate"), 10);
-    if (feeRate > 0) builder.feePerKb = feeRate;
-    setResult("transfer-result", `Transferring ${count} fragment(s) to ${recipient}...`);
-    let sent = 0;
-    const errors = [];
-    for (const frag of toSend) {
-      try {
-        const result = await builder.createTransfer(frag.tokenId, recipient);
-        sent++;
-        setResult("transfer-result", `Sent fragment #${frag.genesisOutputIndex} (${sent}/${count})...
-TXID: ${result.txId}`);
-        pollTransferConfirmation(result.txId, result.tokenId);
-      } catch (e) {
-        errors.push(`#${frag.genesisOutputIndex}: ${e.message}`);
-      }
-    }
-    const summary = [`Transferred ${sent}/${count} fragment(s) to ${recipient}`];
-    if (errors.length > 0) {
-      summary.push("", "Errors:", ...errors);
-    }
-    setResult("transfer-result", summary.join("\n"));
-    await refreshTokenList();
-    await refreshBalance();
-  };
-  window._sendSingleFragment = async (tokenId, fragIndex) => {
-    const recipient = inputVal("transfer-recipient");
-    if (!recipient) {
-      setResult("transfer-result", "Enter a recipient BSV address in the Transfer Token section below.");
-      el("transfer-recipient")?.focus();
-      return;
-    }
-    const feeRate = parseInt(inputVal("fee-rate"), 10);
-    if (feeRate > 0) builder.feePerKb = feeRate;
-    setResult("transfer-result", `Sending fragment #${fragIndex}...`);
-    try {
-      const result = await builder.createTransfer(tokenId, recipient);
-      setResult("transfer-result", `Sent fragment #${fragIndex}
-TXID: ${result.txId}
-View: https://whatsonchain.com/tx/${result.txId}`);
-      pollTransferConfirmation(result.txId, result.tokenId);
-      await refreshTokenList();
-      await refreshBalance();
-    } catch (e) {
-      setResult("transfer-result", `Error sending fragment #${fragIndex}: ${e.message}`);
-    }
-  };
-  window._verifyToken = (tokenId) => {
-    const input = el("verify-token-id");
-    if (input) input.value = tokenId;
-    handleVerify().then(() => {
-      el("verify-result")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  };
-  window._transferFungible = async (tokenId, genKey) => {
-    const tokenIdInput = el("transfer-token-id");
-    if (tokenIdInput) tokenIdInput.value = tokenId;
-    const amtInput = el(`fungible-send-${genKey}`);
-    const amount = parseInt(amtInput?.value ?? "0", 10);
-    if (!amount || amount < 1) {
-      setResult("transfer-result", "Enter a valid amount (minimum 1 sat).");
-      el("transfer-section")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-    const recipient = inputVal("transfer-recipient");
-    if (!recipient) {
-      setResult("transfer-result", "Enter a recipient BSV address in the Transfer Token section below.");
-      el("transfer-section")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      el("transfer-recipient")?.focus();
-      return;
-    }
-    const stateInput = el(`fungible-state-${genKey}`);
-    const stateText = stateInput?.value?.trim() ?? "";
-    const newStateData = stateText ? encodeStateData(stateText) : void 0;
-    const feeRate = parseInt(inputVal("fee-rate"), 10);
-    if (feeRate > 0) builder.feePerKb = feeRate;
-    setResult("transfer-result", `Transferring ${amount.toLocaleString()} tokens...`);
-    try {
-      const result = await builder.transferFungible(tokenId, recipient, amount, newStateData);
-      setResult("transfer-result", [
-        "Fungible transfer broadcast!",
-        `TXID: ${result.txId}`,
-        `Sent: ${result.amountSent.toLocaleString()} tokens`,
-        result.change > 0 ? `Change: ${result.change.toLocaleString()} tokens` : "",
-        `View: https://whatsonchain.com/tx/${result.txId}`
-      ].filter(Boolean).join("\n"));
-      await refreshTokenList();
-      await refreshBalance();
-    } catch (e) {
-      setResult("transfer-result", `Error: ${e.message}`);
-    }
-  };
-  window._verifyFungible = async (tokenId) => {
-    const input = el("verify-token-id");
-    if (input) input.value = tokenId;
-    await handleVerify();
-    el("verify-result")?.scrollIntoView({ behavior: "smooth", block: "center" });
-  };
-  window._forwardMessage = async (tokenId, utxoTxId, utxoOutputIndex) => {
-    const recipient = inputVal("transfer-recipient");
-    if (!recipient) {
-      setResult("transfer-result", "Enter a recipient BSV address in the Transfer Token section below to forward this message.");
-      el("transfer-section")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      el("transfer-recipient")?.focus();
-      return;
-    }
-    const feeRate = parseInt(inputVal("fee-rate"), 10);
-    if (feeRate > 0) builder.feePerKb = feeRate;
-    setResult("transfer-result", "Forwarding message UTXO...");
-    try {
-      const result = await builder.forwardFungibleUtxo(tokenId, utxoTxId, utxoOutputIndex, recipient);
-      setResult("transfer-result", [
-        "Message forwarded!",
-        `TXID: ${result.txId}`,
-        `Sent: ${result.amountSent.toLocaleString()} tokens`,
-        `View: https://whatsonchain.com/tx/${result.txId}`
-      ].join("\n"));
-      await refreshTokenList();
-      await refreshBalance();
-    } catch (e) {
-      setResult("transfer-result", `Error: ${e.message}`);
-    }
-  };
-  window._removeUtxo = async (tokenId, utxoTxId, utxoOutputIndex) => {
-    if (!confirm(`Remove UTXO ${utxoTxId.slice(0, 12)}...:${utxoOutputIndex} from this token's basket?
-
-This only removes it from local storage, not from the blockchain.`)) {
-      return;
-    }
-    try {
-      const token = await store.getFungibleToken(tokenId);
-      if (!token) {
-        alert("Token not found");
-        return;
-      }
-      const idx = token.utxos.findIndex((u) => u.txId === utxoTxId && u.outputIndex === utxoOutputIndex);
-      if (idx === -1) {
-        alert("UTXO not found in basket");
-        return;
-      }
-      token.utxos.splice(idx, 1);
-      await store.updateFungibleToken(token);
-      await refreshTokenList();
-    } catch (e) {
-      alert(`Error: ${e.message}`);
-    }
-  };
-  window._confirmTransfer = async (tokenId) => {
-    if (!confirm("Mark this token as transferred?")) return;
-    try {
-      await builder.confirmTransfer(tokenId);
-      await refreshTokenList();
-    } catch (e) {
-      alert(`Error: ${e.message}`);
-    }
-  };
-  window._viewFile = async (genesisTxId, hash, currentTxId) => {
-    let file = await fileCache.get(hash);
-    if (file && !getFileMeta(hash)) {
-      setFileMeta(hash, file.mimeType, file.fileName);
-    }
-    if (!file) {
-      try {
-        const fetched = await builder.fetchFileFromGenesis(genesisTxId, hash);
-        if (fetched) {
-          file = { hash, ...fetched };
-          await fileCache.store(hash, fetched);
-          setFileMeta(hash, fetched.mimeType, fetched.fileName);
-        }
-      } catch (e) {
-        console.debug("fetchFileFromGenesis failed:", e.message);
-      }
-    }
-    if (!file && currentTxId && currentTxId !== genesisTxId) {
-      try {
-        const fetched = await builder.fetchFileFromGenesis(currentTxId, hash);
-        if (fetched) {
-          file = { hash, ...fetched };
-          await fileCache.store(hash, fetched);
-          setFileMeta(hash, fetched.mimeType, fetched.fileName);
-        }
-      } catch (e) {
-        console.debug("fetchFileFromTransfer failed:", e.message);
-      }
-    }
-    if (!file) {
-      promptFileRecovery(hash);
-      return;
-    }
-    displayFile(file);
-  };
-  function displayFile(file) {
-    const blob = new Blob([file.bytes.buffer], { type: file.mimeType });
-    const url = URL.createObjectURL(blob);
-    const modal = el("media-modal");
-    const filenameEl = el("media-filename");
-    const contentEl = el("media-content");
-    if (!modal || !filenameEl || !contentEl) {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = file.fileName;
-      a.click();
-      return;
-    }
-    filenameEl.textContent = file.fileName;
-    let html = "";
-    const controlsEl = el("media-controls");
-    const isMedia = file.mimeType.startsWith("audio/") || file.mimeType.startsWith("video/");
-    if (file.mimeType.startsWith("image/")) {
-      html = `<img src="${url}" alt="${escHtml(file.fileName)}" />`;
-    } else if (file.mimeType.startsWith("audio/")) {
-      html = `<audio id="media-player" src="${url}" autoplay></audio>`;
-    } else if (file.mimeType.startsWith("video/")) {
-      html = `<video id="media-player" src="${url}" controls autoplay></video>`;
-    } else if (file.mimeType.startsWith("text/")) {
-      const text = new TextDecoder().decode(file.bytes);
-      html = `<pre>${text.replace(/</g, "&lt;")}</pre>`;
-    } else {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = file.fileName;
-      a.click();
-      return;
-    }
-    contentEl.innerHTML = html;
-    modal.classList.add("show");
-    if (controlsEl) {
-      controlsEl.style.display = isMedia ? "flex" : "none";
-      const loopBtn = el("mc-loop");
-      if (loopBtn) loopBtn.classList.remove("active");
-    }
-    const escHandler = (e) => {
-      if (e.key === "Escape") closeMediaModal();
-    };
-    document.addEventListener("keydown", escHandler);
-    modal._escHandler = escHandler;
-    modal.onclick = (e) => {
-      if (e.target === modal) closeMediaModal();
-    };
-  }
-  function closeMediaModal() {
-    const modal = el("media-modal");
-    const contentEl = el("media-content");
-    if (modal) {
-      modal.classList.remove("show");
-      if (modal._escHandler) {
-        document.removeEventListener("keydown", modal._escHandler);
-      }
-    }
-    if (contentEl) {
-      const video = contentEl.querySelector("video");
-      const audio = contentEl.querySelector("audio");
-      if (video) video.pause();
-      if (audio) audio.pause();
-      contentEl.innerHTML = "";
-    }
-  }
-  window._closeMediaModal = closeMediaModal;
-  function getMediaPlayer() {
-    return document.getElementById("media-player");
-  }
-  window._mediaPlay = () => {
-    const player = getMediaPlayer();
-    if (player) player.play();
-  };
-  window._mediaPause = () => {
-    const player = getMediaPlayer();
-    if (player) player.pause();
-  };
-  window._mediaStop = () => {
-    const player = getMediaPlayer();
-    if (player) {
-      player.pause();
-      player.currentTime = 0;
-    }
-  };
-  window._mediaLoop = () => {
-    const player = getMediaPlayer();
-    const loopBtn = el("mc-loop");
-    if (player && loopBtn) {
-      player.loop = !player.loop;
-      loopBtn.classList.toggle("active", player.loop);
-    }
-  };
-  window._mediaVolume = (value) => {
-    const player = getMediaPlayer();
-    if (player) player.volume = parseInt(value, 10) / 100;
-  };
-  function promptFileRecovery(expectedHash) {
-    const msg = "Genesis TX unavailable (possibly pruned). Upload the original file to verify and restore.";
-    if (!confirm(msg)) return;
-    const input = document.createElement("input");
-    input.type = "file";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const arrayBuf = await file.arrayBuffer();
-      const bytes2 = new Uint8Array(arrayBuf);
-      const hashBytes = Hash_exports.sha256(Array.from(bytes2));
-      const computedHash = Array.from(hashBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-      if (computedHash !== expectedHash) {
-        alert("Hash mismatch. This is not the original file embedded in this NFT.");
-        return;
-      }
-      const fileData = {
-        mimeType: file.type || "application/octet-stream",
-        fileName: file.name,
-        bytes: bytes2
-      };
-      await fileCache.store(expectedHash, fileData);
-      setFileMeta(expectedHash, fileData.mimeType, fileData.fileName);
-      displayFile(fileData);
-    };
-    input.click();
-  }
-  function el(id) {
-    return document.getElementById(id);
-  }
-  function setText(id, text) {
-    const e = el(id);
-    if (e) e.textContent = text;
-  }
-  function setResult(id, text) {
-    const e = el(id);
-    if (e) e.textContent = text;
-  }
-  function inputVal(id) {
-    const e = el(id);
-    return e?.value?.trim() ?? "";
-  }
-  function on(id, handler) {
-    el(id)?.addEventListener("click", handler);
-  }
-  function escHtml(s2) {
-    return s2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-  function formatDate(iso) {
-    try {
-      const d = new Date(iso);
-      return d.toLocaleString();
-    } catch {
-      return iso;
-    }
-  }
-  var flushingTokenId = null;
-  window._openFlushDialog = async (tokenId) => {
-    const token = await store.getToken(tokenId);
-    if (!token) {
-      alert("Token not found");
-      return;
-    }
-    flushingTokenId = tokenId;
-    const dialog = el("flush-dialog");
-    const tokenNameEl = el("flush-token-name");
-    if (!dialog) return;
-    if (tokenNameEl) {
-      tokenNameEl.textContent = token.tokenName;
-    }
-    dialog.showModal();
-  };
-  window._confirmFlushToken = async () => {
-    if (!flushingTokenId) return;
-    const dialog = el("flush-dialog");
-    const preserveCheckbox = el("flush-preserve");
-    const preserveMetadata = preserveCheckbox?.checked ?? true;
-    if (!dialog) return;
-    dialog.close();
-    try {
-      setText("transfer-result", `Flushing token ${flushingTokenId.slice(0, 12)}...`);
-      const result = await builder.flushToken(flushingTokenId, preserveMetadata);
-      setResult("transfer-result", [
-        "Token flushed!",
-        `Token ID: ${result.tokenId}`,
-        `Flushed at: ${result.flushedAt}`,
-        "",
-        preserveMetadata ? "Metadata preserved. Token can be recovered if needed." : "Metadata not preserved. Token removed permanently."
-      ].join("\n"));
-      await refreshTokenList();
-      await refreshBalance();
-    } catch (e) {
-      setResult("transfer-result", `Error flushing token: ${e.message}`);
-    }
-    flushingTokenId = null;
-  };
-  window._cancelFlushDialog = () => {
-    const dialog = el("flush-dialog");
-    if (dialog) dialog.close();
-    flushingTokenId = null;
-  };
-  window._recoverFlushedToken = async (tokenId) => {
-    try {
-      const token = await store.getToken(tokenId);
-      if (!token) {
-        setResult("transfer-result", "Token not found in storage");
-        return;
-      }
-      if (token.status !== "flushed") {
-        setResult("transfer-result", `Token is not in flushed state (current status: ${token.status})`);
-        return;
-      }
-      setText("transfer-result", `Un-flushing token ${tokenId.slice(0, 12)}...`);
-      token.status = "active";
-      token.flushedAt = void 0;
-      await store.updateToken(token);
-      setResult("transfer-result", [
-        "Token restored!",
-        `Token: ${token.tokenName} (${tokenId.slice(0, 12)}...)`,
-        `Status: Active`,
-        "Token has been restored from flushed state."
-      ].join("\n"));
-      await refreshTokenList();
-    } catch (e) {
-      setResult("transfer-result", `Error recovering token: ${e.message}`);
-    }
-  };
-  window._startRecoveryScan = async () => {
-    const resultsDiv = el("recovery-results");
-    if (!resultsDiv) return;
-    try {
-      const tokens = await store.listTokens();
-      const flushedTokens = tokens.filter((t) => t.status === "flushed");
-      let html = `<div style="margin-top:12px;border-top:1px solid #30363d;padding-top:12px;">`;
-      if (flushedTokens.length > 0) {
-        html += `<div style="margin-bottom:12px;padding:12px;background:#3d2d0d;border-left:4px solid #d29922;border-radius:4px;">
-        <strong style="color:#d29922;">\u26A0 Flushed Tokens: ${flushedTokens.length}</strong><br>
-        <span style="font-size:0.9em;color:#c9d1d9;">These tokens are flushed and can be restored:</span>
-        ${flushedTokens.map((t) => `
-          <div style="margin-top:6px;font-size:0.85em;">
-            <span style="color:#c9d1d9;">${escHtml(t.tokenName)}</span>
-            <code class="muted" style="font-size:0.8em;display:block;">${t.tokenId.slice(0, 20)}...</code>
-            <button onclick="window._recoverFlushedToken('${t.tokenId}')" style="margin-top:4px;font-size:0.75em;background:#238636;">Restore Token</button>
-          </div>
-        `).join("")}
-      </div>`;
-      } else {
-        html += `<div style="padding:12px;background:#161b22;border-radius:4px;color:#c9d1d9;">
-        No flushed tokens found.
-      </div>`;
-      }
-      html += `</div>`;
-      resultsDiv.innerHTML = html;
-      setResult("transfer-result", [
-        "Flushed tokens scan complete!",
-        `Found: ${flushedTokens.length}`,
-        'Click "Restore Token" to un-flush any token.'
-      ].join("\n"));
-    } catch (e) {
-      setResult("transfer-result", `Error scanning for flushed tokens: ${e.message}`);
-    }
-  };
-  document.addEventListener("DOMContentLoaded", init);
 })();
 //# sourceMappingURL=bundle.js.map
