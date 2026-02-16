@@ -383,6 +383,15 @@ class CallSignaling {
     try {
       // Extract address hashes from tokenAttributes (first 8 bytes after version)
       // Format: [Version(1)][CallerHash(4)][CalleeHash(4)][...rest of attributes]
+      console.log('[CallSignaling] 🔍 VALIDATE: Full token dump:', {
+        tokenId: token.tokenId?.slice(0, 20),
+        tokenName: token.tokenName,
+        caller: token.caller,
+        callee: token.callee,
+        tokenAttributesLen: token.tokenAttributes?.length || 0,
+        tokenAttributesFirst40: token.tokenAttributes?.substring(0, 40)
+      })
+
       if (!token.tokenAttributes) {
         console.warn('[CallSignaling] ⚠️ Token missing tokenAttributes for address validation')
         return false
@@ -395,8 +404,14 @@ class CallSignaling {
       }
 
       // Extract 4-byte hashes from hex string (skip version byte at 0-2)
+      // Format: 01abcd1234wxyz5678...
       const callerHashHex = attrHex.substring(2, 10)  // 4 bytes = 8 hex chars
       const calleeHashHex = attrHex.substring(10, 18)  // 4 bytes = 8 hex chars
+      console.log('[CallSignaling] 🔍 VALIDATE: Extracted hashes from attributes:', {
+        first20chars: attrHex.substring(0, 20),
+        callerHashHex_substring_2_10: callerHashHex,
+        calleeHashHex_substring_10_18: calleeHashHex
+      })
 
       // These are already 8-char hex strings from being encoded as 4-byte values
       const storedCallerHash = callerHashHex.padStart(8, '0')
