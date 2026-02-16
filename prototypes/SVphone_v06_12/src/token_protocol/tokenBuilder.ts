@@ -1534,29 +1534,50 @@ export class TokenBuilder {
             console.debug(`[tokenBuilder] isCALL=${opData.tokenName?.startsWith('CALL-')}`)
             if (opData.tokenName?.startsWith('CALL-')) {
               console.log(`[tokenBuilder] 📞 CALL token (RETURNED) detected: ${opData.tokenName}, extracting addresses`)
+              console.debug(`[tokenBuilder] Return-to-sender: existing token has caller=${existing.caller?.slice(0,20)}, callee=${existing.callee?.slice(0,20)}`)
               try {
                 // Extract callee from the P2PKH output (who the token is being sent to)
                 const calleeOutput = tx.outputs[p2pkhOutputIndex]
+                console.debug(`[tokenBuilder] calleeOutput exists=${!!calleeOutput}, hasLockingScript=${!!calleeOutput?.lockingScript}`)
                 if (calleeOutput?.lockingScript) {
                   const calleeAddrScript = calleeOutput.lockingScript.toHex()
+                  console.debug(`[tokenBuilder] calleeAddrScript=${calleeAddrScript}`)
                   const calleeAddr = extractAddressFromP2pkhScript(calleeAddrScript)
+                  console.debug(`[tokenBuilder] extractAddressFromP2pkhScript returned: ${calleeAddr}`)
                   if (calleeAddr) {
                     existing.callee = calleeAddr
                     console.log(`[tokenBuilder] ✅ CALLEE (RETURNED) extracted: ${calleeAddr}`)
+                  } else {
+                    console.warn(`[tokenBuilder] ⚠️ CALLEE extraction failed (returned null)`)
                   }
+                } else {
+                  console.warn(`[tokenBuilder] ⚠️ calleeOutput or lockingScript missing at index ${p2pkhOutputIndex}`)
                 }
 
                 // Extract caller from input 0
+                console.debug(`[tokenBuilder] tx.inputs?.length=${tx.inputs?.length}`)
                 if (tx.inputs?.length > 0) {
                   let callerAddr = extractCallerFromSPVEnvelope(tx.inputs[0] as any)
+                  console.debug(`[tokenBuilder] extractCallerFromSPVEnvelope returned: ${callerAddr}`)
                   if (!callerAddr) {
+                    console.debug(`[tokenBuilder] SPV envelope failed, trying blockchain method...`)
                     callerAddr = await extractCallerFromBlockchain(this.provider, tx.inputs[0] as any)
+                    console.debug(`[tokenBuilder] extractCallerFromBlockchain returned: ${callerAddr}`)
                   }
                   if (callerAddr) {
                     existing.caller = callerAddr
                     console.log(`[tokenBuilder] ✅ CALLER (RETURNED) extracted: ${callerAddr}`)
+                  } else {
+                    console.warn(`[tokenBuilder] ⚠️ CALLER extraction failed (both methods returned null)`)
                   }
+                } else {
+                  console.warn(`[tokenBuilder] ⚠️ No inputs in transaction (tx.inputs empty)`)
                 }
+
+                console.log(`[tokenBuilder] ✅ CALL token address extraction complete:`, {
+                  caller: existing.caller?.slice(0, 20),
+                  callee: existing.callee?.slice(0, 20)
+                })
               } catch (e: any) {
                 console.error(`[tokenBuilder] ❌ Error extracting CALL token addresses (returned): ${e?.message}`)
               }
