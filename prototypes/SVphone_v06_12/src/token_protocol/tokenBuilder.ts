@@ -1520,8 +1520,12 @@ export class TokenBuilder {
           }
           // Still pending, skip
           if (existing && existing.status === 'pending') continue
+
           // Return-to-sender: token was sent away but came back to us
-          if (existing && (existing.status === 'transferred' || existing.status === 'pending_transfer')) {
+          // IMPORTANT: Only process if UTXO location changed (different txId or outputIndex)
+          // Otherwise it's the same UTXO we just transferred and we should skip it
+          const utxoChanged = existing.currentTxId !== txId || existing.currentOutputIndex !== p2pkhOutputIndex
+          if (existing && (existing.status === 'transferred' || existing.status === 'pending_transfer') && utxoChanged) {
             console.log(`[tokenBuilder] ✓ RETURN-TO-SENDER path: ${opData.tokenName}, status=${existing.status}`)
             existing.status = 'active'
             existing.currentTxId = txId
