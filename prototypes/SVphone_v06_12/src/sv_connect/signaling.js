@@ -304,11 +304,15 @@ class CallSignaling {
     }
 
     // CASE 3: Could not extract caller/callee
-    console.warn('[CallSignaling] ⚠️ Could not extract caller/callee from token:', {
+    console.warn('[CallSignaling] ⚠️ Case 3: Cannot extract caller/callee from token', {
       hasTokenId: !!token.tokenId,
       storedInCallTokens: !!storedToken,
+      tokenCaller: token.caller || 'undefined',
+      tokenCallee: token.callee || 'undefined',
       hasCallerCallee: !!(token.caller && token.callee),
-      tokenId: token.tokenId?.slice(0, 20)
+      tokenId: token.tokenId?.slice(0, 20),
+      tokenName: token.tokenName,
+      reason: 'Caller/callee not in callTokens or token metadata. Check if tokenBuilder extracted from transaction.'
     })
     return null
   }
@@ -335,23 +339,46 @@ class CallSignaling {
       const storedCallerHash = restrictionsHash.substring(0, 8)
       const storedCalleeHash = restrictionsHash.substring(8, 16)
 
+      console.debug('[CallSignaling] 📋 Restrictions field parsed', {
+        full: restrictionsHash,
+        storedCallerHash,
+        storedCalleeHash
+      })
+
+      console.debug('[CallSignaling] 📌 Token addresses to validate', {
+        tokenCaller: token.caller,
+        tokenCallee: token.callee
+      })
+
       // Compute hashes of token addresses
       const computedCallerHash = await this.hashAddress(token.caller)
       const computedCalleeHash = await this.hashAddress(token.callee)
+
+      console.debug('[CallSignaling] 🔐 Computed address hashes', {
+        computedCallerHash,
+        computedCalleeHash
+      })
 
       // Validate both hashes match
       const callerMatch = computedCallerHash === storedCallerHash
       const calleeMatch = computedCalleeHash === storedCalleeHash
 
+      console.log('[CallSignaling] 📊 Hash comparison results', {
+        callerMatch: callerMatch ? '✓ MATCH' : '✗ MISMATCH',
+        calleeMatch: calleeMatch ? '✓ MATCH' : '✗ MISMATCH',
+        caller: { stored: storedCallerHash, computed: computedCallerHash, match: callerMatch },
+        callee: { stored: storedCalleeHash, computed: computedCalleeHash, match: calleeMatch }
+      })
+
       if (!callerMatch || !calleeMatch) {
-        console.warn('[CallSignaling] ❌ Address validation failed', {
+        console.warn('[CallSignaling] ❌ Address validation FAILED', {
           caller: callerMatch ? '✓' : `✗ (stored: ${storedCallerHash}, computed: ${computedCallerHash})`,
           callee: calleeMatch ? '✓' : `✗ (stored: ${storedCalleeHash}, computed: ${computedCalleeHash})`
         })
         return false
       }
 
-      console.debug('[CallSignaling] ✓ Address validation passed', {
+      console.log('[CallSignaling] ✅ Address validation PASSED', {
         callerHash: computedCallerHash,
         calleeHash: computedCalleeHash
       })

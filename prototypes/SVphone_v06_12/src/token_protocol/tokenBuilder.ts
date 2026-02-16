@@ -1549,35 +1549,52 @@ export class TokenBuilder {
               createdAt: new Date().toISOString(),
             }
 
-            // For CALL tokens: extract caller and callee addresses
+            // For CALL tokens: extract caller and callee addresses from transaction
             if (opData.tokenName?.startsWith('CALL-')) {
+              console.debug(`[tokenBuilder] 📞 CALL token detected, extracting addresses from tx`)
               try {
                 // Extract callee: recipient of the token output (P2PKH)
                 const calleeOutput = tx.outputs[p2pkhOutputIndex]
                 if (calleeOutput?.lockingScript) {
-                  const calleeAddr = extractAddressFromP2pkhScript(calleeOutput.lockingScript.toHex())
-                  if (calleeAddr) token.callee = calleeAddr
+                  const calleeAddrScript = calleeOutput.lockingScript.toHex()
+                  const calleeAddr = extractAddressFromP2pkhScript(calleeAddrScript)
+                  if (calleeAddr) {
+                    token.callee = calleeAddr
+                    console.log(`[tokenBuilder] 👤 CALLEE extracted: ${calleeAddr}`)
+                  } else {
+                    console.warn(`[tokenBuilder] ⚠️ Could not extract callee from P2PKH script: ${calleeAddrScript}`)
+                  }
 
-                  // For transfers: extract caller from genesis output
-                  // For genesis: extract caller from first output (change address would be sender)
+                  // For transfers: extract caller from input data
+                  // For genesis: sender not available in UTXO (SPV limitation)
                   if (isTransfer && tx.inputs?.length > 0) {
-                    // Unconfirmed transfer: try to extract from input metadata if available
-                    // This requires the transaction to include the previous output (BEEF format)
+                    console.debug(`[tokenBuilder] 📡 CALL transfer detected, attempting to extract caller from input 0`)
                     try {
                       const input0 = tx.inputs[0] as any
-                      // Try to get sender from input's previous output if available in SPV envelope
+                      // Try to get sender from input's previous output if available in SPV envelope (BEEF format)
                       if (input0.sourceOutput?.lockingScript) {
-                        const callerAddr = extractAddressFromP2pkhScript(input0.sourceOutput.lockingScript.toHex())
-                        if (callerAddr) token.caller = callerAddr
+                        const callerAddrScript = input0.sourceOutput.lockingScript.toHex()
+                        const callerAddr = extractAddressFromP2pkhScript(callerAddrScript)
+                        if (callerAddr) {
+                          token.caller = callerAddr
+                          console.log(`[tokenBuilder] 👤 CALLER extracted from SPV envelope: ${callerAddr}`)
+                        } else {
+                          console.warn(`[tokenBuilder] ⚠️ Could not extract caller from sourceOutput script: ${callerAddrScript}`)
+                        }
+                      } else {
+                        console.warn(`[tokenBuilder] ⚠️ No sourceOutput in input 0 (SPV envelope not available)`)
                       }
                     } catch (e: any) {
-                      console.debug(`checkIncoming: Could not extract caller from input for ${opData.tokenName}:`, e?.message)
+                      console.warn(`[tokenBuilder] ⚠️ Error extracting caller from input: ${e?.message}`)
                     }
+                  } else if (!isTransfer) {
+                    console.debug(`[tokenBuilder] 📄 CALL genesis detected (not transfer) - caller not available in UTXO (SPV limitation)`)
                   }
                 }
               } catch (e: any) {
-                console.debug(`checkIncoming: Could not extract CALL token addresses:`, e?.message)
+                console.error(`[tokenBuilder] ❌ Error extracting CALL token addresses: ${e?.message}`)
               }
+              console.debug(`[tokenBuilder] ✓ CALL token address extraction complete`, { caller: token.caller, callee: token.callee })
             }
 
             await this.store.addToken(token, verification.chain)
