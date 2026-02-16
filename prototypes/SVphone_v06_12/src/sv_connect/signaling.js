@@ -135,7 +135,12 @@ class CallSignaling {
    * @private
    */
   parseTokenAttributes(tokenAttributesHex) {
-    if (!tokenAttributesHex) return {}
+    if (!tokenAttributesHex) {
+      console.debug('[CallSignaling] parseTokenAttributes: tokenAttributesHex is empty/null')
+      return {}
+    }
+
+    console.debug(`[CallSignaling] parseTokenAttributes: HEX length=${tokenAttributesHex.length}, first 40 chars: ${tokenAttributesHex.substring(0, 40)}`)
 
     try {
       // Convert hex to bytes
@@ -144,12 +149,28 @@ class CallSignaling {
         bytes.push(parseInt(tokenAttributesHex.substr(i, 2), 16))
       }
 
-      if (bytes.length === 0) return {}
+      console.debug(`[CallSignaling] parseTokenAttributes: Converted to ${bytes.length} bytes, first 10 bytes: [${bytes.slice(0, 10).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`)
+
+      if (bytes.length === 0) {
+        console.warn('[CallSignaling] parseTokenAttributes: bytes array is empty after conversion')
+        return {}
+      }
 
       // Decode binary format v1
-      return this.decodeBinaryAttributes(bytes)
+      const decoded = this.decodeBinaryAttributes(bytes)
+      console.debug('[CallSignaling] parseTokenAttributes: Decoded successfully', {
+        hasIp: !!decoded.senderIp,
+        hasPort: !!decoded.senderPort,
+        hasKey: !!decoded.sessionKey,
+        codec: decoded.codec,
+        quality: decoded.quality,
+        mediaTypes: decoded.mediaTypes,
+        sdpLen: decoded.sdpOffer?.length || 0
+      })
+      return decoded
     } catch (error) {
       console.error('[CallSignaling] Failed to parse tokenAttributes:', error)
+      console.error('[CallSignaling] tokenAttributesHex was:', tokenAttributesHex?.substring(0, 100))
       return {}
     }
   }
@@ -159,9 +180,11 @@ class CallSignaling {
    * @private
    */
   decodeBinaryAttributes(bytes) {
+    console.debug(`[CallSignaling] decodeBinaryAttributes: Starting decode of ${bytes.length} bytes`)
     let offset = 1 // Skip version byte
 
     // IP address (4 or 16 bytes based on version bit)
+    console.debug(`[CallSignaling] decodeBinaryAttributes: offset=${offset}, decoding IP...`)
     const ipTypeByte = bytes[offset++]
     const isIPv6 = (ipTypeByte >> 7) & 1
     const ipBytes = [ipTypeByte & 0x7F, ...bytes.slice(offset, offset + (isIPv6 ? 15 : 3))]
@@ -169,34 +192,48 @@ class CallSignaling {
       ? this.bytesToIPv6(ipBytes)
       : `${ipBytes[0]}.${bytes[offset+1]}.${bytes[offset+2]}.${bytes[offset+3]}`
     offset += isIPv6 ? 15 : 3
+    console.debug(`[CallSignaling] decodeBinaryAttributes: ✓ IP decoded=${senderIp}, isIPv6=${isIPv6}, offset now=${offset}`)
 
     // Port (2 bytes)
+    console.debug(`[CallSignaling] decodeBinaryAttributes: offset=${offset}, decoding Port...`)
     const senderPort = (bytes[offset] << 8) | bytes[offset + 1]
     offset += 2
+    console.debug(`[CallSignaling] decodeBinaryAttributes: ✓ Port decoded=${senderPort}, offset now=${offset}`)
 
     // Session key
+    console.debug(`[CallSignaling] decodeBinaryAttributes: offset=${offset}, decoding Session Key...`)
     const keyLen = bytes[offset++]
+    console.debug(`[CallSignaling] decodeBinaryAttributes: keyLen=${keyLen}`)
     const keyBuf = bytes.slice(offset, offset + keyLen)
     const sessionKey = new TextDecoder().decode(new Uint8Array(keyBuf))
     offset += keyLen
+    console.debug(`[CallSignaling] decodeBinaryAttributes: ✓ Key decoded, length=${keyLen}, offset now=${offset}`)
 
     // Codec
+    console.debug(`[CallSignaling] decodeBinaryAttributes: offset=${offset}, decoding Codec...`)
     const codecIds = ['opus', 'pcm', 'aac']
     const codec = codecIds[bytes[offset++]] || 'opus'
+    console.debug(`[CallSignaling] decodeBinaryAttributes: ✓ Codec decoded=${codec}, offset now=${offset}`)
 
     // Quality
+    console.debug(`[CallSignaling] decodeBinaryAttributes: offset=${offset}, decoding Quality...`)
     const qualityIds = ['sd', 'hd', 'vhd']
     const quality = qualityIds[bytes[offset++]] || 'hd'
+    console.debug(`[CallSignaling] decodeBinaryAttributes: ✓ Quality decoded=${quality}, offset now=${offset}`)
 
     // Media types
+    console.debug(`[CallSignaling] decodeBinaryAttributes: offset=${offset}, decoding MediaTypes...`)
     const mediaTypeBitmask = bytes[offset++]
     const mediaTypes = []
     if (mediaTypeBitmask & 0x01) mediaTypes.push('audio')
     if (mediaTypeBitmask & 0x02) mediaTypes.push('video')
+    console.debug(`[CallSignaling] decodeBinaryAttributes: ✓ MediaTypes decoded=${mediaTypes.join(',')}, offset now=${offset}`)
 
     // SDP Offer (variable-length, 2-byte length prefix)
+    console.debug(`[CallSignaling] decodeBinaryAttributes: offset=${offset}, decoding SDP length...`)
     const sdpLen = (bytes[offset] << 8) | bytes[offset + 1]
     offset += 2
+    console.debug(`[CallSignaling] decodeBinaryAttributes: sdpLen=${sdpLen}, offset now=${offset}`)
     const sdpBuf = bytes.slice(offset, offset + sdpLen)
     const sdpOffer = new TextDecoder().decode(new Uint8Array(sdpBuf))
     offset += sdpLen

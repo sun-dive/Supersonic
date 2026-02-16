@@ -1511,49 +1511,52 @@
 
                                   console.debug(`[RECV]   Parsing attributes (first 20 chars): ${t.tokenAttributes.substring(0, 20)}...`)
 
-                                  // Use signaling layer's parser (auto-detects binary v1 or legacy JSON)
-                                  let attrs
+                                  // Use signaling layer's parser to decode binary connection attributes
+                                  let attrs = {}
                                   if (appInstance.signaling && appInstance.signaling.parseTokenAttributes) {
                                     attrs = appInstance.signaling.parseTokenAttributes(t.tokenAttributes)
-                                    console.debug(`[RECV]   ✓ Parsed with signaling parser:`, attrs)
+                                    console.debug(`[RECV]   ✓ Parsed connection attributes with signaling parser:`, {
+                                      hasSenderIp: !!attrs.senderIp,
+                                      hasSenderPort: !!attrs.senderPort,
+                                      hasCodec: !!attrs.codec,
+                                      hasSdp: !!attrs.sdpOffer?.length
+                                    })
                                   } else {
-                                    // Fallback: Try legacy JSON parsing if signaling not available
-                                    console.debug(`[RECV]   ⚠️  Signaling parser unavailable, trying legacy JSON`)
-                                    appInstance.log(`[RECV]       ⚠️  Signaling parser unavailable, trying legacy JSON`, 'debug')
-                                    let attributesJson = ''
-                                    for (let i = 0; i < t.tokenAttributes.length; i += 2) {
-                                      const hex = t.tokenAttributes.substr(i, 2)
-                                      attributesJson += String.fromCharCode(parseInt(hex, 16))
-                                    }
-                                    attrs = JSON.parse(attributesJson)
-                                    console.debug(`[RECV]   ✓ Parsed with fallback parser:`, attrs)
+                                    console.debug(`[RECV]   ⚠️  Signaling parser unavailable, proceeding without connection attributes`)
+                                    appInstance.log(`[RECV]       ⚠️  Signaling parser unavailable, proceeding without connection attributes`, 'debug')
                                   }
 
-                                  if (!attrs || !attrs.callee) {
-                                    console.debug(`[RECV]   ❌ Failed to parse attributes or missing callee`, attrs)
-                                    appInstance.log(`[RECV]       ❌ Failed to parse attributes or missing callee`, 'warning')
+                                  // NOTE: Caller and callee are NOW stored on the token object itself (token.caller, token.callee)
+                                  // They are populated by tokenBuilder during import from transaction metadata
+                                  // They are NOT in tokenAttributes - attributes only contain connection data (IP, port, codec, etc)
+                                  if (!t.caller || !t.callee) {
+                                    console.debug(`[RECV]   ❌ Missing caller/callee on token object (should be populated by tokenBuilder)`, {
+                                      tokenCaller: t.caller?.slice(0, 20),
+                                      tokenCallee: t.callee?.slice(0, 20)
+                                    })
+                                    appInstance.log(`[RECV]       ❌ Token missing caller/callee metadata`, 'warning')
                                     return false
                                   }
 
                                   console.debug(`[RECV]   Checking: am I the callee (incoming call) or caller (response)?`)
-                                  appInstance.log(`[RECV]       ✓ Parsed: caller=${attrs.caller?.slice(0,10)}..., callee=${attrs.callee?.slice(0,10)}...`, 'debug')
+                                  appInstance.log(`[RECV]       ✓ Token metadata: caller=${t.caller?.slice(0,10)}..., callee=${t.callee?.slice(0,10)}...`, 'debug')
 
                                   // Accept token if:
                                   // 1. I'm the callee (incoming call from caller to me)
                                   // 2. I'm the caller (response token - original token returned by callee)
-                                  const isIncomingCall = attrs.callee === address
-                                  const isResponseToken = attrs.caller === address
+                                  const isIncomingCall = t.callee === address
+                                  const isResponseToken = t.caller === address
 
                                   if (isIncomingCall) {
                                     console.debug(`[RECV]   ✅ INCOMING CALL! I'm the callee (receiver)`)
-                                    appInstance.log(`[RECV]       ✅ INCOMING CALL! Token from caller ${attrs.caller?.slice(0,10)}...`, 'debug')
+                                    appInstance.log(`[RECV]       ✅ INCOMING CALL! Token from caller ${t.caller?.slice(0,10)}...`, 'debug')
                                     return true
                                   } else if (isResponseToken) {
                                     console.debug(`[RECV]   ✅ RESPONSE TOKEN! I'm the caller (original sender)`)
-                                    appInstance.log(`[RECV]       ✅ RESPONSE! Token returned by ${attrs.callee?.slice(0,10)}...`, 'debug')
+                                    appInstance.log(`[RECV]       ✅ RESPONSE! Token returned by ${t.callee?.slice(0,10)}...`, 'debug')
                                     return true
                                   } else {
-                                    console.debug(`[RECV]   ❌ Token not for me (caller=${attrs.caller?.slice(0,10)}, callee=${attrs.callee?.slice(0,10)})`)
+                                    console.debug(`[RECV]   ❌ Token not for me (caller=${t.caller?.slice(0,10)}, callee=${t.callee?.slice(0,10)})`)
                                     appInstance.log(`[RECV]       ❌ Token not for me (want ${address.slice(0,10)}... as caller or callee)`, 'debug')
                                     return false
                                   }
