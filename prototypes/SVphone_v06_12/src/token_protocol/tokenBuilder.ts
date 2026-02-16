@@ -1524,37 +1524,6 @@ export class TokenBuilder {
             existing.currentOutputIndex = p2pkhOutputIndex
             existing.transferTxId = undefined
             existing.stateData = opData.stateData
-
-            // For returned CALL tokens: extract caller and callee addresses (may have changed after transfer)
-            if (opData.tokenName?.startsWith('CALL-')) {
-              console.log(`[tokenBuilder] 📞 CALL token RETURNED to sender, re-extracting addresses`)
-              try {
-                const calleeOutput = tx.outputs[p2pkhOutputIndex]
-                if (calleeOutput?.lockingScript) {
-                  const calleeAddrScript = calleeOutput.lockingScript.toHex()
-                  const calleeAddr = extractAddressFromP2pkhScript(calleeAddrScript)
-                  if (calleeAddr) {
-                    existing.callee = calleeAddr
-                    console.log(`[tokenBuilder] ✅ CALLEE re-extracted on return: ${calleeAddr}`)
-                  }
-
-                  if (tx.inputs?.length > 0) {
-                    const input0 = tx.inputs[0] as any
-                    let callerAddr = extractCallerFromSPVEnvelope(input0)
-                    if (!callerAddr) {
-                      callerAddr = await extractCallerFromBlockchain(this.provider, input0)
-                    }
-                    if (callerAddr) {
-                      existing.caller = callerAddr
-                      console.log(`[tokenBuilder] ✅ CALLER re-extracted on return: ${callerAddr}`)
-                    }
-                  }
-                }
-              } catch (e: any) {
-                console.warn(`[tokenBuilder] Note: Could not extract addresses on return: ${e?.message}`)
-              }
-            }
-
             await this.store.updateToken(existing)
             await this.store.addToken(existing, verification.chain)
 
