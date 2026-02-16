@@ -1550,51 +1550,72 @@ export class TokenBuilder {
             }
 
             // For CALL tokens: extract caller and callee addresses from transaction
+            console.debug(`[tokenBuilder] Checking token type: tokenName="${opData.tokenName}", startsWith('CALL-')=${opData.tokenName?.startsWith('CALL-')}`)
             if (opData.tokenName?.startsWith('CALL-')) {
-              console.debug(`[tokenBuilder] 📞 CALL token detected, extracting addresses from tx`)
+              console.log(`[tokenBuilder] 📞 CALL token detected: ${opData.tokenName}, extracting addresses from tx`)
               try {
                 // Extract callee: recipient of the token output (P2PKH)
                 const calleeOutput = tx.outputs[p2pkhOutputIndex]
+                console.debug(`[tokenBuilder] calleeOutput at index ${p2pkhOutputIndex}:`, {
+                  exists: !!calleeOutput,
+                  hasLockingScript: !!calleeOutput?.lockingScript
+                })
                 if (calleeOutput?.lockingScript) {
                   const calleeAddrScript = calleeOutput.lockingScript.toHex()
+                  console.debug(`[tokenBuilder] Callee script hex: ${calleeAddrScript}`)
                   const calleeAddr = extractAddressFromP2pkhScript(calleeAddrScript)
                   if (calleeAddr) {
                     token.callee = calleeAddr
-                    console.log(`[tokenBuilder] 👤 CALLEE extracted: ${calleeAddr}`)
+                    console.log(`[tokenBuilder] ✅ CALLEE extracted: ${calleeAddr}`)
                   } else {
                     console.warn(`[tokenBuilder] ⚠️ Could not extract callee from P2PKH script: ${calleeAddrScript}`)
                   }
+                } else {
+                  console.warn(`[tokenBuilder] ⚠️ calleeOutput or lockingScript missing at index ${p2pkhOutputIndex}`)
+                }
 
                   // Extract caller from input 0 (works for both transfers and genesis)
                   if (tx.inputs?.length > 0) {
                     const txType = isTransfer ? 'TRANSFER' : 'GENESIS'
-                    console.debug(`[tokenBuilder] 📡 CALL ${txType}: extracting caller from input 0`)
+                    console.log(`[tokenBuilder] 📡 CALL ${txType}: extracting caller from input 0`)
                     try {
                       const input0 = tx.inputs[0] as any
+                      console.debug(`[tokenBuilder] Input 0 details:`, {
+                        hasSourcTXID: !!input0.sourceTXID,
+                        hasSourceOutputIndex: input0.sourceOutputIndex !== undefined,
+                        hasSourceOutput: !!input0.sourceOutput
+                      })
 
                       // Try Method 1: SPV envelope (fastest)
                       let callerAddr = extractCallerFromSPVEnvelope(input0)
 
                       // Try Method 2: Query blockchain (fallback)
                       if (!callerAddr) {
-                        console.debug(`[tokenBuilder] [Method 1] unavailable, trying [Method 2]...`)
+                        console.debug(`[tokenBuilder] Method 1 unavailable, trying Method 2...`)
                         callerAddr = await extractCallerFromBlockchain(this.provider, input0)
                       }
 
                       if (callerAddr) {
                         token.caller = callerAddr
+                        console.log(`[tokenBuilder] ✅ CALLER extracted: ${callerAddr}`)
                       } else {
                         console.warn(`[tokenBuilder] ⚠️ Could not extract caller (both methods failed)`)
                       }
                     } catch (e: any) {
                       console.error(`[tokenBuilder] ❌ Unexpected error extracting caller: ${e?.message}`)
                     }
+                  } else {
+                    console.warn(`[tokenBuilder] ⚠️ No inputs in transaction`)
                   }
                 }
               } catch (e: any) {
                 console.error(`[tokenBuilder] ❌ Error extracting CALL token addresses: ${e?.message}`)
               }
-              console.debug(`[tokenBuilder] ✓ CALL token address extraction complete`, { caller: token.caller, callee: token.callee })
+              console.log(`[tokenBuilder] ✓ CALL token address extraction complete:`, {
+                tokenName: token.tokenName,
+                caller: token.caller?.slice(0, 20),
+                callee: token.callee?.slice(0, 20)
+              })
             }
 
             await this.store.addToken(token, verification.chain)
@@ -1662,50 +1683,70 @@ export class TokenBuilder {
             }
 
             // For CALL tokens in Genesis TX: extract caller and callee addresses
+            console.debug(`[tokenBuilder] Checking Genesis token type: tokenName="${opData.tokenName}", startsWith('CALL-')=${opData.tokenName?.startsWith('CALL-')}`)
             if (opData.tokenName?.startsWith('CALL-')) {
-              console.debug(`[tokenBuilder] 📞 CALL token (GENESIS) detected, extracting addresses from tx`)
+              console.log(`[tokenBuilder] 📞 CALL token (GENESIS) detected: ${opData.tokenName}, extracting addresses from tx`)
               try {
                 // Extract callee: recipient of the token output (P2PKH)
                 const calleeOutput = tx.outputs[p2pkhOutputIndex]
+                console.debug(`[tokenBuilder] GENESIS: calleeOutput at index ${p2pkhOutputIndex}:`, {
+                  exists: !!calleeOutput,
+                  hasLockingScript: !!calleeOutput?.lockingScript
+                })
                 if (calleeOutput?.lockingScript) {
                   const calleeAddrScript = calleeOutput.lockingScript.toHex()
+                  console.debug(`[tokenBuilder] GENESIS: Callee script hex: ${calleeAddrScript}`)
                   const calleeAddr = extractAddressFromP2pkhScript(calleeAddrScript)
                   if (calleeAddr) {
                     token.callee = calleeAddr
-                    console.log(`[tokenBuilder] 👤 CALLEE (GENESIS) extracted: ${calleeAddr}`)
+                    console.log(`[tokenBuilder] ✅ CALLEE (GENESIS) extracted: ${calleeAddr}`)
                   } else {
                     console.warn(`[tokenBuilder] ⚠️ Could not extract callee from P2PKH script: ${calleeAddrScript}`)
                   }
 
                   // Extract caller from input 0 (Genesis TX sender)
                   if (tx.inputs?.length > 0) {
-                    console.debug(`[tokenBuilder] 📡 CALL GENESIS: extracting caller from input 0`)
+                    console.log(`[tokenBuilder] 📡 CALL GENESIS: extracting caller from input 0`)
                     try {
                       const input0 = tx.inputs[0] as any
+                      console.debug(`[tokenBuilder] GENESIS: Input 0 details:`, {
+                        hasSourceTXID: !!input0.sourceTXID,
+                        hasSourceOutputIndex: input0.sourceOutputIndex !== undefined,
+                        hasSourceOutput: !!input0.sourceOutput
+                      })
 
                       // Try Method 1: SPV envelope (fastest)
                       let callerAddr = extractCallerFromSPVEnvelope(input0)
 
                       // Try Method 2: Query blockchain (fallback)
                       if (!callerAddr) {
-                        console.debug(`[tokenBuilder] [Method 1] unavailable, trying [Method 2]...`)
+                        console.debug(`[tokenBuilder] GENESIS: Method 1 unavailable, trying Method 2...`)
                         callerAddr = await extractCallerFromBlockchain(this.provider, input0)
                       }
 
                       if (callerAddr) {
                         token.caller = callerAddr
+                        console.log(`[tokenBuilder] ✅ CALLER (GENESIS) extracted: ${callerAddr}`)
                       } else {
                         console.warn(`[tokenBuilder] ⚠️ Could not extract caller (both methods failed)`)
                       }
                     } catch (e: any) {
                       console.error(`[tokenBuilder] ❌ Unexpected error extracting caller: ${e?.message}`)
                     }
+                  } else {
+                    console.warn(`[tokenBuilder] ⚠️ No inputs in GENESIS transaction`)
                   }
+                } else {
+                  console.warn(`[tokenBuilder] ⚠️ GENESIS: calleeOutput or lockingScript missing at index ${p2pkhOutputIndex}`)
                 }
               } catch (e: any) {
                 console.error(`[tokenBuilder] ❌ Error extracting CALL token addresses (GENESIS): ${e?.message}`)
               }
-              console.debug(`[tokenBuilder] ✓ CALL token (GENESIS) address extraction complete`, { caller: token.caller, callee: token.callee })
+              console.log(`[tokenBuilder] ✓ CALL token (GENESIS) address extraction complete:`, {
+                tokenName: token.tokenName,
+                caller: token.caller?.slice(0, 20),
+                callee: token.callee?.slice(0, 20)
+              })
             }
 
             await this.store.addToken(token, genesisVerification.chain)
