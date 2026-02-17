@@ -313,6 +313,26 @@ function getMimeTypeIcon(mimeType) {
   return '\u{1F4CE}';  // paperclip (generic file)
 }
 
+/** Infer MIME type from file extension when the browser returns an empty string */
+function inferMimeType(fileName, browserType) {
+  if (browserType) return browserType;
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  const map = {
+    txt: 'text/plain', md: 'text/markdown', json: 'text/json',
+    csv: 'text/csv', xml: 'text/xml', html: 'text/html', htm: 'text/html',
+    css: 'text/css', js: 'text/javascript', ts: 'text/typescript',
+    svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg',
+    jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    bmp: 'image/bmp', ico: 'image/x-icon',
+    wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg',
+    flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac',
+    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+    avi: 'video/x-msvideo', mkv: 'video/x-matroska',
+    pdf: 'application/pdf', zip: 'application/zip',
+  };
+  return (ext && map[ext]) || 'application/octet-stream';
+}
+
 const FILE_META_KEY = 'p:fileMeta';
 function getFileMeta(hash) {
   try {
