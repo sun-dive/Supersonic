@@ -42,31 +42,15 @@ class CallTokenManager {
    * @param {Object} callToken - Call token with connection info and sdpOffer
    * @returns {string} Hex-encoded binary data
    */
-  encodeCallAttributes(callToken, callerHash, calleeHash) {
+  encodeCallAttributes(callToken) {
     try {
       const bytes = []
 
       // Version marker (0x01 = binary format v1)
       bytes.push(0x01)
 
-      // Address verification hashes (caller + callee, 8 hex chars each = 4 bytes each = 8 bytes total)
-      // These are used by signaling.js to validate call addresses
-      if (callerHash && calleeHash) {
-        // Convert hex string hashes to bytes
-        const callerHashBytes = []
-        for (let i = 0; i < callerHash.length; i += 2) {
-          callerHashBytes.push(parseInt(callerHash.substr(i, 2), 16))
-        }
-        const calleeHashBytes = []
-        for (let i = 0; i < calleeHash.length; i += 2) {
-          calleeHashBytes.push(parseInt(calleeHash.substr(i, 2), 16))
-        }
-        bytes.push(...callerHashBytes)  // First 4 bytes
-        bytes.push(...calleeHashBytes)  // Next 4 bytes
-      } else {
-        // No hashes provided (for answer tokens, just push 8 zero bytes)
-        bytes.push(0, 0, 0, 0, 0, 0, 0, 0)
-      }
+      // Note: Address verification hashes are in tokenRules.restrictions (immutable after genesis)
+      // tokenAttributes only contains connection data (IP, port, key, codec, quality, SDP)
 
       // IP address and port
       const ip = callToken.senderIp
@@ -321,8 +305,9 @@ class CallTokenManager {
       const calleeHash = await this.hashAddress(callToken.callee)
       console.debug(`[CallToken] Address hashes: caller=${callerHash}, callee=${calleeHash}`)
 
-      // Encode call connection information into tokenAttributes (includes address hashes for validation)
-      const encodedAttributes = this.encodeCallAttributes(callToken, callerHash, calleeHash)
+      // Encode call connection information into tokenAttributes (IP, port, key, codec, quality, SDP)
+      // Address hashes are stored in tokenRules.restrictions (immutable after genesis)
+      const encodedAttributes = this.encodeCallAttributes(callToken)
       console.debug(`[CallToken] Encoded attributes: ${encodedAttributes.length / 2} bytes`)
 
       // Create P token for call signaling with encoded connection info
