@@ -171,8 +171,11 @@ class CallTokenManager {
   /**
    * Broadcast a call answer response token back to caller
    *
-   * Answer tokens are transfers (not genesis) and include SDP Answer in tokenAttributes.
+   * Answer tokens are transfers (not genesis) with SDP Answer encoded in tokenAttributes.
    * Used when callee accepts call and needs to send media negotiation data back to caller.
+   *
+   * IMPORTANT: tokenRules (including caller/callee addresses) remain immutable from genesis.
+   * Only tokenAttributes is written for the answer data in this transfer.
    *
    * @param {string} tokenId - Existing call token ID to transfer back
    * @param {string} callerAddress - Caller's address (recipient of answer token)
@@ -183,9 +186,10 @@ class CallTokenManager {
     console.debug(`[CallToken] Broadcasting call answer to ${callerAddress}`)
 
     try {
-      // Encode answer data into tokenAttributes (same format as offer, just different SDP content)
-      // For answer tokens, we don't re-encode caller/callee hashes (they stay from genesis)
-      const encodedAttributes = this.encodeCallAttributes({
+      // Encode answer data into tokenAttributes for transfer
+      // Format: same as genesis offer, but with sdpAnswer instead of sdpOffer
+      // Caller/callee hashes from genesis tokenRules are NOT re-encoded (they remain immutable)
+      const answerAttributes = this.encodeCallAttributes({
         sdpAnswer: answerData.sdpAnswer,  // Answer goes into same SDP field as offer
         senderIp: answerData.senderIp,
         senderPort: answerData.senderPort,
@@ -193,12 +197,13 @@ class CallTokenManager {
         codec: answerData.codec,
         quality: answerData.quality,
         mediaTypes: answerData.mediaTypes
-      }, null, null)  // No address hashes for answer tokens (keep genesis hashes)
-      console.debug(`[CallToken] Encoded answer attributes: ${encodedAttributes.length / 2} bytes`)
+      }, null, null)  // No address hashes for answer (keep genesis hashes immutable in tokenRules)
+      console.debug(`[CallToken] Encoded answer attributes: ${answerAttributes.length / 2} bytes`)
 
-      // Transfer token back to caller with answer data
+      // Transfer token back to caller with answer data in tokenAttributes
+      // tokenRules remain unchanged (immutable after genesis)
       const transferResult = await this.tokenBuilder.createTransfer(tokenId, callerAddress, {
-        tokenAttributes: encodedAttributes
+        tokenAttributes: answerAttributes
       })
 
       console.debug(`[CallToken] ✅ Answer token transferred: ${transferResult.txId}`)
