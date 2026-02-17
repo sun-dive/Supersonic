@@ -17,8 +17,9 @@
 const CALL_TOKEN_RULES = {
   supply: 1,              // Single NFT per call
   divisibility: 0,        // Never divisible
-  restrictions: 0,        // NFT (no restrictions)
+  restrictions: 'dynamic',  // Set per token to caller + callee address hashes (immutable after genesis)
   version: 1              // Rules version
+  // restrictions format: callerHash (8 hex) + calleeHash (8 hex) = 16 hex = 64 bits
 }
 
 class CallTokenManager {
@@ -169,6 +170,68 @@ class CallTokenManager {
   }
 
   /**
+   * Verify token restrictions contain this address's hash
+   * Both caller and callee check if their own hash is in restrictions (either position)
+   * Format: restrictions = callerHash (8 hex) + calleeHash (8 hex)
+   *
+   * @param {Object} token - Token object with tokenRules or restrictions field
+   * @param {string} myAddress - My BSV address to verify
+   * @returns {Promise<{valid: boolean, message: string, myHashPosition: string}>}
+   */
+  async verifyTokenForMe(token, myAddress) {
+    try {
+      const restrictions = token.tokenRules?.restrictions || token.restrictions
+      if (!restrictions || restrictions.length < 16) {
+        return {
+          valid: false,
+          message: 'Invalid restrictions format (expected 16 hex chars)',
+          myHashPosition: 'none'
+        }
+      }
+
+      // Parse restrictions: positions 0-7 and 8-15 contain the two address hashes
+      const hash1 = restrictions.substring(0, 8)
+      const hash2 = restrictions.substring(8, 16)
+      console.debug(`[CallToken] Token restrictions hashes: hash1=${hash1}, hash2=${hash2}`)
+
+      // Compute my address hash
+      const myHash = await this.hashAddress(myAddress)
+      console.debug(`[CallToken] My address hash: ${myHash}`)
+
+      // Check if my hash is in either position
+      if (myHash === hash1) {
+        console.debug(`[CallToken] ✓ My hash found in position 1 (first hash)`)
+        return {
+          valid: true,
+          message: '✓ Token is for me (hash verified in restrictions)',
+          myHashPosition: 'first'
+        }
+      } else if (myHash === hash2) {
+        console.debug(`[CallToken] ✓ My hash found in position 2 (second hash)`)
+        return {
+          valid: true,
+          message: '✓ Token is for me (hash verified in restrictions)',
+          myHashPosition: 'second'
+        }
+      } else {
+        console.debug(`[CallToken] ✗ My hash NOT found in restrictions`)
+        return {
+          valid: false,
+          message: '✗ Token is NOT for me (hash not in restrictions)',
+          myHashPosition: 'none'
+        }
+      }
+    } catch (error) {
+      console.error(`[CallToken] Verification error:`, error)
+      return {
+        valid: false,
+        message: `Verification error: ${error.message}`,
+        myHashPosition: 'none'
+      }
+    }
+  }
+
+  /**
    * Broadcast a call answer response token back to caller
    *
    * Answer tokens are transfers (not genesis) with SDP Answer encoded in tokenAttributes.
@@ -263,13 +326,18 @@ class CallTokenManager {
       console.debug(`[CallToken] Encoded attributes: ${encodedAttributes.length / 2} bytes`)
 
       // Create P token for call signaling with encoded connection info
+      // Combine caller and callee address hashes into tokenRules.restrictions (immutable)
+      // Format: callerHash (8 hex chars) + calleeHash (8 hex chars) = 16 hex chars = 64 bits
+      const restrictionsValue = callerHash + calleeHash
+      console.debug(`[CallToken] Restrictions (address hashes): ${restrictionsValue}`)
+
       const result = await this.tokenBuilder.createGenesis({
         tokenName: `CALL-${callerIdent}`,
         tokenScript: '',  // No consensus rules needed
-        attributes: encodedAttributes,  // Encoded call connection info (includes address hashes, IP, port, session key, etc.)
+        attributes: encodedAttributes,  // Encoded call connection info (IP, port, session key, SDP, etc.)
         supply: CALL_TOKEN_RULES.supply,
         divisibility: CALL_TOKEN_RULES.divisibility,
-        restrictions: 0,  // No restrictions (address validation via tokenAttributes hashes instead)
+        restrictions: restrictionsValue,  // Address validation hashes: caller + callee (immutable after genesis)
         rulesVersion: CALL_TOKEN_RULES.version,
         stateData: '00'  // Empty (state tracked in signaling layer)
       })
