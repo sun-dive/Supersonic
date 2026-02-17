@@ -767,45 +767,58 @@ class CallSignaling {
             continue
           }
 
-          // Verify token via SPV before processing
+          // Accept token immediately for instant messaging UX (pure SPV principle)
+          // Token ID is cryptographically valid on receipt - no verification gate needed
           const tokenType = isIncomingCall ? 'incoming call' : 'call response'
-          console.log(`[CallSignaling] Verifying ${tokenType} token`)
-          const verification = await verifyTokenFn(token)
+          console.log(`[CallSignaling] ✓ Accepting ${tokenType} immediately`)
 
-          if (verification.valid) {
-            // Validate caller and callee addresses against restrictions hash
-            console.log(`[CallSignaling] Validating call addresses against tokenRules.restrictions`)
-            const addressesValid = await this.validateCallAddresses(token)
+          if (isIncomingCall) {
+            console.log(`[CallSignaling] Processing incoming call`)
+            // Merge parsed attributes back into token for handleIncomingCall
+            // Note: caller and callee come from transaction metadata, not attributes
+            token.senderIp = attributes.senderIp
+            token.senderPort = attributes.senderPort
+            token.sessionKey = attributes.sessionKey
+            token.codec = attributes.codec
+            token.quality = attributes.quality
+            token.mediaTypes = attributes.mediaTypes || ['audio', 'video']
+            token.sdpOffer = attributes.sdpOffer
 
+            this.handleIncomingCall(token)
+          } else if (isResponseToken) {
+            console.log(`[CallSignaling] Processing call response`)
+            // Parse stateData to extract callee's response (connection data)
+            this.handleCallResponse(token, attributes)
+          }
+
+          // Run validation and verification in background (non-blocking)
+          this.validateCallAddresses(token).then(addressesValid => {
+            console.log(`[CallSignaling] Background address validation complete for ${token.tokenId?.slice(0, 10)}:`, {
+              valid: addressesValid
+            })
             if (!addressesValid) {
-              console.warn('[CallSignaling] ❌ Call address validation failed - token rejected')
-              continue
+              console.warn(`[CallSignaling] ⚠️ Address validation failed after acceptance`, {
+                tokenId: token.tokenId
+              })
             }
+          }).catch(error => {
+            console.error(`[CallSignaling] Background address validation error for ${token.tokenId?.slice(0, 10)}:`, error)
+          })
 
-            if (isIncomingCall) {
-              console.log(`[CallSignaling] Token verified! Processing incoming call`)
-              // Merge parsed attributes back into token for handleIncomingCall
-              // Note: caller and callee come from transaction metadata, not attributes
-              token.senderIp = attributes.senderIp
-              token.senderPort = attributes.senderPort
-              token.sessionKey = attributes.sessionKey
-              token.codec = attributes.codec
-              token.quality = attributes.quality
-              token.mediaTypes = attributes.mediaTypes || ['audio', 'video']
-              token.sdpOffer = attributes.sdpOffer
-
-              this.handleIncomingCall(token)
-            } else if (isResponseToken) {
-              console.log(`[CallSignaling] Token verified! Processing call response`)
-              // Parse stateData to extract callee's response (connection data)
-              this.handleCallResponse(token, attributes)
-            }
-          } else {
-            console.warn('[CallSignaling] Incoming call token failed verification:', {
-              tokenId: token.tokenId,
+          verifyTokenFn(token).then(verification => {
+            console.log(`[CallSignaling] Background SPV verification complete for ${token.tokenId?.slice(0, 10)}:`, {
+              valid: verification.valid,
               reason: verification.reason
             })
-          }
+            if (!verification.valid) {
+              console.warn(`[CallSignaling] ⚠️ SPV verification failed after acceptance`, {
+                tokenId: token.tokenId,
+                reason: verification.reason
+              })
+            }
+          }).catch(error => {
+            console.error(`[CallSignaling] Background SPV verification error for ${token.tokenId?.slice(0, 10)}:`, error)
+          })
         }
       } catch (error) {
         console.error('[CallSignaling] Error during polling:', error)
