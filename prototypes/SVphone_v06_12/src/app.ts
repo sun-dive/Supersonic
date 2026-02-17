@@ -12,12 +12,14 @@ import { WalletProvider } from './token_protocol/walletProvider'
 import { TokenBuilder } from './token_protocol/tokenBuilder'
 import { TokenStore, LocalStorageBackend } from './token_protocol/tokenStore'
 import { decodeTokenRules } from './token_protocol/opReturnCodec'
+import { FileCache } from './fileCache'
 
 // ─── Global instances for browser access ────────────────────────────
 
 let provider: WalletProvider
 let builder: TokenBuilder
 let store: TokenStore
+let fileCache: FileCache
 
 const WIF_KEY = 'p:wallet:wif'
 
@@ -42,6 +44,7 @@ function init() {
   provider = new WalletProvider(address)
   const storage = new LocalStorageBackend('p:data:')
   store = new TokenStore(storage)
+  fileCache = new FileCache()
   builder = new TokenBuilder(provider, store, key)
 
   console.log('[SVphone v06.12] Initialized')
@@ -61,6 +64,7 @@ declare global {
     store?: TokenStore
     tokenStore?: TokenStore  // Alias for phone_interface.html
     provider?: WalletProvider
+    fileCache?: FileCache
     initWallet?: typeof init
     decodeTokenRules?: typeof decodeTokenRules
     bitcoin?: {
@@ -89,6 +93,7 @@ function initAndExpose() {
   window.store = store
   window.tokenStore = store  // Alias for phone_interface.html
   window.provider = provider
+  window.fileCache = fileCache
 }
 
 // Auto-initialize on load

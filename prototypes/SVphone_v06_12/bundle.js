@@ -17191,10 +17191,47 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     }
   };
 
+  // src/fileCache.ts
+  var DB_NAME = "p-files";
+  var STORE_NAME = "files";
+  var DB_VERSION = 2;
+  var FileCache = class {
+    constructor() {
+      __publicField(this, "dbPromise");
+      this.dbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = () => {
+          req.result.createObjectStore(STORE_NAME, { keyPath: "hash" });
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    async store(hash, data) {
+      const db = await this.dbPromise;
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.objectStore(STORE_NAME).put({ hash, ...data });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+    async get(hash) {
+      const db = await this.dbPromise;
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const req = tx.objectStore(STORE_NAME).get(hash);
+        req.onsuccess = () => resolve(req.result ?? null);
+        req.onerror = () => reject(req.error);
+      });
+    }
+  };
+
   // src/app.ts
   var provider;
   var builder;
   var store;
+  var fileCache;
   var WIF_KEY = "p:wallet:wif";
   function init() {
     let wif = localStorage.getItem(WIF_KEY);
@@ -17215,6 +17252,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     provider = new WalletProvider(address);
     const storage = new LocalStorageBackend("p:data:");
     store = new TokenStore(storage);
+    fileCache = new FileCache();
     builder = new TokenBuilder(provider, store, key);
     console.log("[SVphone v06.12] Initialized");
     console.log("[SVphone v06.12] Address:", address);
@@ -17236,6 +17274,7 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     window.store = store;
     window.tokenStore = store;
     window.provider = provider;
+    window.fileCache = fileCache;
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", initAndExpose);
