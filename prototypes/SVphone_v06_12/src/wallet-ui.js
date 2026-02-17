@@ -13,6 +13,7 @@ class WalletUI {
     this.addressElement = document.getElementById('address');
     this.balanceElement = document.getElementById('balance');
     this.tokenListElement = document.getElementById('token-list');
+    this.wifVisible = false; // Track WIF visibility state
   }
 
   /**
@@ -88,6 +89,7 @@ class WalletUI {
     try {
       const pubkeyEl = document.getElementById('pubkey');
       const privkeyEl = document.getElementById('privkey');
+      const btnToggleWif = document.getElementById('btn-toggle-wif');
 
       if (pubkeyEl && window.myPublicKey) {
         pubkeyEl.textContent = window.myPublicKey;
@@ -95,11 +97,41 @@ class WalletUI {
       }
 
       if (privkeyEl && window.myWif) {
-        privkeyEl.textContent = window.myWif;
-        console.log('[WalletUI] Private key populated');
+        // Hide WIF by default (show masked version)
+        privkeyEl.textContent = '••••••••••••••••';
+        privkeyEl.dataset.wif = window.myWif; // Store actual WIF in data attribute
+        privkeyEl.style.cursor = 'pointer';
+        console.log('[WalletUI] Private key populated (hidden by default)');
+      }
+
+      // Setup toggle button
+      if (btnToggleWif) {
+        btnToggleWif.onclick = () => this.toggleWifVisibility();
       }
     } catch (err) {
       console.error('[WalletUI] Error populating keys:', err);
+    }
+  }
+
+  /**
+   * Toggle WIF visibility (Show/Hide)
+   */
+  toggleWifVisibility() {
+    const privkeyEl = document.getElementById('privkey');
+    const btnToggleWif = document.getElementById('btn-toggle-wif');
+
+    if (!privkeyEl || !btnToggleWif) return;
+
+    this.wifVisible = !this.wifVisible;
+
+    if (this.wifVisible) {
+      privkeyEl.textContent = privkeyEl.dataset.wif || window.myWif;
+      btnToggleWif.textContent = 'Hide';
+      btnToggleWif.style.background = '#d29922';
+    } else {
+      privkeyEl.textContent = '••••••••••••••••';
+      btnToggleWif.textContent = 'Show';
+      btnToggleWif.style.background = '#30363d';
     }
   }
 

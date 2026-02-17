@@ -113,9 +113,13 @@
   <!-- Wallet Info -->
   <section id="wallet-info">
     <h2>Wallet</h2>
-    <div class="field"><span class="label">Address:</span> <code id="address">...</code></div>
-    <div class="field"><span class="label">Public Key:</span> <code id="pubkey">...</code></div>
-    <div class="field"><span class="label">Private Key (WIF):</span> <code id="privkey">...</code></div>
+    <div class="field"><span class="label">Address:</span> <code id="address" class="selectable">...</code></div>
+    <div class="field"><span class="label">Public Key:</span> <code id="pubkey" class="selectable">...</code></div>
+    <div class="field" style="display:flex; align-items:center; gap:8px;">
+      <span class="label">Private Key (WIF):</span>
+      <code id="privkey" class="selectable" style="flex:1;">...</code>
+      <button id="btn-toggle-wif" style="background:#30363d; font-size:0.9em; white-space:nowrap; min-width:60px;">Show</button>
+    </div>
     <div class="field"><span class="label">Balance:</span> <span id="balance">...</span></div>
     <div class="row" style="margin-top:10px;">
       <button id="btn-refresh">Refresh Balance</button>
