@@ -17225,6 +17225,10 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
   window.WalletProvider = WalletProvider;
   window.initWallet = init;
   window.decodeTokenRules = decodeTokenRules;
+  window.bitcoin = {
+    PrivateKey,
+    Hash: Hash_exports
+  };
   function initAndExpose() {
     init();
     window.builder = builder;

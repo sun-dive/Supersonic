@@ -7,7 +7,7 @@
  * - All supporting utilities
  */
 
-import { PrivateKey } from '@bsv/sdk'
+import { PrivateKey, Hash } from '@bsv/sdk'
 import { WalletProvider } from './token_protocol/walletProvider'
 import { TokenBuilder } from './token_protocol/tokenBuilder'
 import { TokenStore, LocalStorageBackend } from './token_protocol/tokenStore'
@@ -63,6 +63,10 @@ declare global {
     provider?: WalletProvider
     initWallet?: typeof init
     decodeTokenRules?: typeof decodeTokenRules
+    bitcoin?: {
+      PrivateKey: typeof PrivateKey
+      Hash: typeof Hash
+    }
   }
 }
 
@@ -71,6 +75,10 @@ window.TokenStore = TokenStore
 window.WalletProvider = WalletProvider
 window.initWallet = init
 window.decodeTokenRules = decodeTokenRules
+window.bitcoin = {
+  PrivateKey,
+  Hash,
+}
 
 // Initialize and expose instances to window
 function initAndExpose() {
