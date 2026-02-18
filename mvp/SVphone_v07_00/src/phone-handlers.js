@@ -1,10 +1,6 @@
 /**
  * SVphone Phone Handlers Layer (v07.00)
- *
- * Handles:
- * - Call event handlers (initiate, accept, reject, end)
- * - Media test handlers (microphone and camera)
- * - Event listener binding and management
+ * Handles call events, media tests, and user interactions
  */
 
 class CallHandlers {
@@ -14,14 +10,13 @@ class CallHandlers {
     }
 
     /**
-     * Initialize call with wallet address and callee
+     * Initialize and make a call
      */
     async initializeCall() {
         try {
-            // Get wallet address from myAddress field (already synced from wallet.html)
             const walletAddress = document.getElementById('myAddress')?.value
             if (!walletAddress || walletAddress === '...' || walletAddress === '') {
-                this.ui.log('Error: Wallet address not loaded. Open wallet.html first.', 'error')
+                this.ui.log('Error: Wallet address not loaded', 'error')
                 return
             }
 
@@ -33,37 +28,29 @@ class CallHandlers {
 
             const calleeAddress = document.getElementById('calleeAddress').value
             if (!calleeAddress) {
-                // If tokens are confirmed but no callee entered, provide helpful message
                 if (this.app.callTokenStatus === 'confirmed') {
-                    this.ui.log('📋 Tokens ready! Please enter the recipient BSV address to call', 'warning')
+                    this.ui.log('📋 Tokens ready! Enter recipient address', 'warning')
                 } else {
                     this.ui.log('Error: Enter recipient address', 'error')
                 }
                 return
             }
 
-            // Save this address as the last called address
             this.app.saveLastCalled(calleeAddress)
-
             const quality = document.getElementById('quality').value
 
-            // Use real token builder from bundle.js
             const tokenBuilder = window.tokenBuilder
             if (!tokenBuilder) {
                 this.ui.log('Error: Token builder not available', 'error')
                 return
             }
 
-            // Note: Polling is already running from startBackgroundPolling()
-            // No need to start polling again here
-
-            // ============ CHECK FOR SELECTED TOKEN ============
+            // Check for selected token
             const selectedTokenId = this.ui.getSelectedToken()
             if (selectedTokenId) {
-                // Use existing selected token - no minting needed!
-                this.ui.log(`✓ Using existing token: ${selectedTokenId.slice(0, 10)}...`, 'success')
+                this.ui.log(`✓ Using token: ${selectedTokenId.slice(0, 10)}...`, 'success')
                 this.ui.updateCallButtonStatus('confirmed')
-                this.ui.log(`📞 Initiating call to ${calleeAddress} (using existing token)...`, 'info')
+                this.ui.log(`📞 Calling ${calleeAddress}...`, 'info')
 
                 const quality = document.getElementById('quality').value
                 const session = await this.app.callManager.initiateCall(calleeAddress, {
@@ -73,38 +60,30 @@ class CallHandlers {
                 })
 
                 this.app.currentCallToken = session.callTokenId
-                console.debug(`[SEND] ✅ Call initiated with session ID: ${session.callTokenId}`)
-                this.ui.log('✓ Call initiated successfully (with existing token)', 'success')
+                this.ui.log('✓ Call initiated successfully', 'success')
                 return
             }
 
-            // ============ CHECK FOR CALL TOKENS ============
             if (this.app.isMintPending) {
-                this.ui.log('⏳ Mint already in progress. Please wait...', 'warning')
+                this.ui.log('⏳ Mint in progress. Please wait...', 'warning')
                 return
             }
 
-            // Use CallTokenManager to create and broadcast tokens
+            // Token creation function
             const callTokenCreateFn = async (token) => {
-                if (!this.app.callTokenManager) {
-                    throw new Error('CallTokenManager not initialized')
-                }
+                if (!this.app.callTokenManager) throw new Error('CallTokenManager not initialized')
                 const result = await this.app.callTokenManager.createAndBroadcastCallToken(token)
-                // Token confirmed - update button to show ready state
                 this.ui.updateCallButtonStatus('confirmed')
-                this.ui.log('✓ Token confirmed - ready to initiate call', 'success')
+                this.ui.log('✓ Token confirmed - ready to call', 'success')
                 return result
             }
 
             const hasCallTokens = await this.app.checkForCallTokens()
             if (!hasCallTokens) {
-                // No tokens available - mint new ones
-                console.debug(`[SEND] 📤 Initiating call (no tokens exist, will mint new ones)`)
-                console.debug(`[SEND]   Callee: ${calleeAddress}`)
-                this.ui.log('📋 No call tokens found. Minting new tokens...', 'info')
+                // No tokens - mint new ones
+                this.ui.log('📋 No call tokens. Minting...', 'info')
                 this.ui.updateCallButtonStatus('minting')
 
-                // Use callTokenCreateFn to create tokens since none exist
                 const session = await this.app.callManager.initiateCall(calleeAddress, {
                     audio: true,
                     video: true,
@@ -112,25 +91,18 @@ class CallHandlers {
                     mintTokenFn: callTokenCreateFn
                 })
 
-                // Token confirmed and call initiated - update button status
                 this.ui.updateCallButtonStatus('calling')
-
                 this.app.currentCallToken = session.callTokenId
-                console.debug(`[SEND] ✅ Call initiated with session ID: ${session.callTokenId}`)
                 this.ui.log('✓ Call initiated successfully', 'success')
             } else {
-                // Tokens exist - check if they're still being created/confirmed
+                // Tokens exist
                 if (this.app.isMintPending || this.app.callTokenStatus === 'minting' || this.app.callTokenStatus === 'pending') {
-                    this.ui.log('⏳ Please wait - tokens are still being created or confirmed', 'warning')
+                    this.ui.log('⏳ Please wait - tokens are being created or confirmed', 'warning')
                     return
                 }
 
-                // Tokens are available - use existing tokens instead of minting new ones
-                // Don't pass mintTokenFn so signaling.broadcastCallToken() uses existing tokens
-                console.debug(`[SEND] 📤 Initiating call (broadcasting existing token)`)
-                console.debug(`[SEND]   Callee: ${calleeAddress}`)
                 this.ui.updateCallButtonStatus('calling')
-                this.ui.log(`📞 Initiating call to ${calleeAddress} (broadcasting token)...`, 'info')
+                this.ui.log(`📞 Calling ${calleeAddress}...`, 'info')
 
                 const session = await this.app.callManager.initiateCall(calleeAddress, {
                     audio: true,
@@ -140,7 +112,6 @@ class CallHandlers {
                 })
 
                 this.app.currentCallToken = session.callTokenId
-                console.debug(`[SEND] ✅ Call initiated with session ID: ${session.callTokenId}`)
                 this.ui.log('✓ Call initiated successfully', 'success')
             }
         } catch (error) {
@@ -247,59 +218,49 @@ class CallHandlers {
                 return
             }
 
-            // Prepare recipient's response data to send back to caller
-            // Generate a random session key (32 bytes, base64 encoded)
+            // Prepare response data to send back to caller
             const keyBytes = new Uint8Array(32)
             crypto.getRandomValues(keyBytes)
-            const recipientSessionKey = btoa(String.fromCharCode(...keyBytes))
             const responseData = {
                 status: 'answered',
                 recipientAddress: recipientAddress,
                 recipientIp: recipientIp,
                 recipientPort: recipientPort,
-                recipientSessionKey: recipientSessionKey,
+                recipientSessionKey: btoa(String.fromCharCode(...keyBytes)),
                 answeredAt: Date.now()
             }
-            // Encode response as binary format (byte-efficient)
             const responseStateHex = this.app.encodeCallState(responseData)
-            console.debug(`[SEND] Response encoded to ${responseStateHex.length / 2} bytes`)
 
-            // Call manager accepts the call
+            // Accept call in call manager
             await this.app.callManager.acceptCall(this.app.currentCallToken, {
                 audio: true,
                 video: true
             })
 
-            // Extract caller's connection data from token attributes for P2P
-            // Use signaling parser which handles both binary v1 and legacy JSON formats
+            // Parse caller's connection data from token
             const callerAttrs = this.app.signaling.parseTokenAttributes(receivedToken.tokenAttributes)
 
-            // Send the token back to the caller with response data in stateData
+            // Send token back to caller
             const tokenBuilder = window.tokenBuilder
             if (tokenBuilder) {
                 try {
                     const callerAddress = receivedToken.caller || callerAttrs.caller
                     if (callerAddress) {
-                        this.ui.log(`📤 Sending token back to caller ${callerAddress}...`, 'info')
-                        console.debug(`[SEND] Response data:`, responseData)
-                        // Transfer the token back to caller with response data in stateData
+                        this.ui.log(`📤 Sending token back to caller...`, 'info')
                         const transferResult = await tokenBuilder.createTransfer(
                             this.app.currentCallToken,
                             callerAddress,
-                            responseStateHex  // Pass recipient's connection data as stateData
+                            responseStateHex
                         )
-                        this.ui.log(`✓ Token sent back to caller: ${transferResult.txId}`, 'success')
-                        console.debug(`[SEND] ✅ Response token transferred: ${transferResult.txId}`)
+                        this.ui.log(`✓ Token sent: ${transferResult.txId}`, 'success')
                     }
                 } catch (transferError) {
-                    this.ui.log(`⚠️  Could not send token back: ${transferError.message}`, 'warning')
-                    // Don't fail the acceptance if transfer fails - local acceptance is still valid
+                    this.ui.log(`⚠️  Could not send token: ${transferError.message}`, 'warning')
                 }
             }
 
-            // Initiate P2P connection to caller using their connection data
+            // Initiate P2P connection to caller
             if (callerAttrs.caller && callerAttrs.senderIp && callerAttrs.senderPort) {
-                console.debug(`[P2P] 🔗 Initiating P2P connection back to caller: ${callerAttrs.caller}`)
                 this.app.initiateP2PConnection(this.app.currentCallToken, callerAttrs.caller, callerAttrs.senderIp, callerAttrs.senderPort)
             }
 
