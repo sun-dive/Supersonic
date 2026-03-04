@@ -71,7 +71,7 @@ class PhoneController {
 
             // Auto-detect IP and generate ephemeral port
             try {
-                this.autoDetectNetworkConfig()
+                await this.autoDetectNetworkConfig()
             } catch (e) {
                 this.ui.log(`⚠️  Network config error: ${e.message}`, 'error')
             }
@@ -240,7 +240,7 @@ class PhoneController {
     /**
      * Auto-detect network configuration
      */
-    autoDetectNetworkConfig() {
+    async autoDetectNetworkConfig() {
         const myIpField = document.getElementById('myIp')
         const myPortField = document.getElementById('myPort')
 
@@ -253,7 +253,26 @@ class PhoneController {
         this.assignedUdpPort = randomPort
         console.log(`[SVphone] Assigned UDP port: ${randomPort} (VoIP range 3478-3497)`)
 
-        myIpField.placeholder = 'Enter your local IP (e.g. 192.168.1.x)'
+        // Auto-detect public IP — try ifconfig.me then ipify as fallback
+        myIpField.value = ''
+        myIpField.placeholder = 'Detecting public IP...'
+        const services = [
+            async () => { const r = await fetch('https://ifconfig.me/ip', { signal: AbortSignal.timeout(3000) }); return (await r.text()).trim() },
+            async () => { const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(3000) }); return (await r.json()).ip },
+        ]
+        for (const fetchIp of services) {
+            try {
+                const ip = await fetchIp()
+                if (ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+                    myIpField.value = ip
+                    myIpField.placeholder = ''
+                    this.ui.log(`✓ Public IP: ${ip}`, 'success')
+                    return
+                }
+            } catch { /* try next */ }
+        }
+        myIpField.placeholder = 'Enter your public IP'
+        this.ui.log('⚠️  Could not detect public IP — enter manually', 'warning')
     }
 
     /**
