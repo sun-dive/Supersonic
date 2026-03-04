@@ -1,7 +1,7 @@
 ---
 deployment:
   tasks:
-    - /bin/cp mvp/SVphone_v08_01/index.html $HOME/public_html/index.html
-    - /bin/cp mvp/SVphone_v08_01/phone_interface.html $HOME/public_html/phone_interface.html
-    - /bin/cp mvp/SVphone_v08_01/wallet.html $HOME/public_html/wallet.html
-    - /bin/cp mvp/SVphone_v08_01/bundle.js $HOME/public_html/bundle.js
+    - /bin/cp mvp/SVphone_v08_01/index.html /home/eznfmuyn/svphone.com/index.html
+    - /bin/cp mvp/SVphone_v08_01/phone_interface.html /home/eznfmuyn/svphone.com/phone_interface.html
+    - /bin/cp mvp/SVphone_v08_01/wallet.html /home/eznfmuyn/svphone.com/wallet.html
+    - /bin/cp mvp/SVphone_v08_01/bundle.js /home/eznfmuyn/svphone.com/bundle.js
