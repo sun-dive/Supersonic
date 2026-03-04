@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVphone v08.00 - Decentralized VoIP</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+            color: #b0d4ff;
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 25px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .panel h2 {
+            font-size: 1.4em;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #4a9eff;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 6px;
+            background: rgba(30, 60, 114, 0.6);
+            color: #fff;
+            font-size: 0.95em;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #4a9eff;
+            background: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 10px rgba(74, 158, 255, 0.3);
+        }
+
+        input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        button {
+            width: 100%;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4a9eff 0%, #357abd 100%);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(74, 158, 255, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: #fff;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(17, 153, 142, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #ffa500 0%, #ff8c42 100%);
+            color: #fff;
+        }
+
+        .btn-warning:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 165, 0, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-panel {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.85em;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .status-item:last-child {
+            border-bottom: none;
+        }
+
+        .status-label {
+            opacity: 0.7;
+        }
+
+        .status-value {
+            font-weight: 600;
+            color: #4a9eff;
+        }
+
+        .call-status {
+            text-align: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            margin: 15px 0;
+            font-size: 1.1em;
+        }
+
+        .call-status.ringing {
+            color: #ffa500;
+            animation: pulse 1s infinite;
+        }
+
+        .call-status.connecting {
+            color: #4a9eff;
+            animation: pulse 1s infinite;
+        }
+
+        .call-status.connected {
+            color: #38ef7d;
+            font-weight: bold;
+        }
+
+        .call-status.ended {
+            color: #ff6b6b;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .video-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        video {
+            width: 100%;
+            height: 250px;
+            background: #000;
+            border-radius: 8px;
+            object-fit: cover;
+        }
+
+        .video-label {
+            font-size: 0.85em;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-box {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.8em;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #4a9eff;
+            font-family: 'Monaco', monospace;
+        }
+
+        .incoming-call {
+            background: rgba(255, 165, 0, 0.2);
+            border: 2px solid #ffa500;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .incoming-call h3 {
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .incoming-call p {
+            opacity: 0.9;
+            margin-bottom: 15px;
+            font-size: 0.95em;
+        }
+
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .console {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 30px;
+            font-family: 'Monaco', monospace;
+            font-size: 0.8em;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .console-line {
+            padding: 3px 0;
+            opacity: 0.8;
+        }
+
+        .console-line.error {
+            color: #ff6b6b;
+        }
+
+        .console-line.success {
+            color: #38ef7d;
+        }
+
+        .console-line.warning {
+            color: #ffa500;
+        }
+
+        .console-line.info {
+            color: #4a9eff;
+        }
+
+        .quality-indicator {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .quality-vhd {
+            background: #38ef7d;
+            color: #000;
+        }
+
+        .quality-hd {
+            background: #4a9eff;
+            color: #fff;
+        }
+
+        .quality-sd {
+            background: #ffa500;
+            color: #fff;
+        }
+
+        .quality-ld {
+            background: #ff6b6b;
+            color: #fff;
+        }
+
+        @media (max-width: 1024px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .video-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Microphone Test Section */
+        .mic-test-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding-bottom: 10px;
+            user-select: none;
+        }
+
+        .section-header h3 {
+            margin: 0;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        .toggle-icon {
+            font-size: 1.2em;
+            transition: transform 0.3s;
+        }
+
+        .toggle-icon.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .mic-test-content {
+            margin-top: 15px;
+            max-height: 600px;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, opacity 0.3s;
+            opacity: 1;
+        }
+
+        .mic-test-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            margin-top: 0;
+        }
+
+        /* Audio Level Meter */
+        .meter-container {
+            margin-bottom: 15px;
+        }
+
+        .meter-container label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.85em;
+        }
+
+        #micLevelMeter {
+            width: 100%;
+            height: 40px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .level-indicator {
+            text-align: right;
+            font-size: 0.85em;
+            font-family: 'Monaco', monospace;
+            margin-top: 5px;
+            color: #4a9eff;
+        }
+
+        /* Volume Slider */
+        .volume-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            background: linear-gradient(to right,
+                rgba(255, 107, 107, 0.3) 0%,
+                rgba(74, 158, 255, 0.3) 50%,
+                rgba(56, 239, 125, 0.3) 100%);
+            outline: none;
+            border-radius: 5px;
+            height: 8px;
+            width: 100%;
+            cursor: pointer;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4a9eff;
+            cursor: pointer;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+
+        .volume-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4a9eff;
+            cursor: pointer;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+
+        .volume-slider:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Checkbox Styling */
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 0.95em;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"]:disabled {
+            cursor: not-allowed;
+        }
+
+        /* Recording Section */
+        .recording-section {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .recording-status {
+            text-align: center;
+            margin-top: 10px;
+            font-family: 'Monaco', monospace;
+            font-size: 0.9em;
+            color: #4a9eff;
+        }
+
+        /* Status Display */
+        .mic-status {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+            font-size: 0.85em;
+            text-align: center;
+        }
+
+        .mic-status.error {
+            background: rgba(255, 107, 107, 0.2);
+            color: #ff6b6b;
+            border: 1px solid rgba(255, 107, 107, 0.3);
+        }
+
+        .mic-status.success {
+            background: rgba(56, 239, 125, 0.2);
+            color: #38ef7d;
+            border: 1px solid rgba(56, 239, 125, 0.3);
+        }
+
+        .mic-status.warning {
+            background: rgba(255, 165, 0, 0.2);
+            color: #ffa500;
+            border: 1px solid rgba(255, 165, 0, 0.3);
+        }
+
+        .mic-status.info {
+            background: rgba(74, 158, 255, 0.2);
+            color: #4a9eff;
+            border: 1px solid rgba(74, 158, 255, 0.3);
+        }
+
+        /* Camera Test Section */
+        .camera-test-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .camera-test-content {
+            margin-top: 15px;
+            max-height: 900px;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, opacity 0.3s;
+            opacity: 1;
+        }
+
+        .camera-test-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            margin-top: 0;
+        }
+
+        /* Video Preview Container */
+        .video-preview-container {
+            margin-bottom: 15px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #000;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        #cameraPreview {
+            width: 100%;
+            height: 250px;
+            display: block;
+            object-fit: cover;
+            background: #000;
+            transition: height 0.3s ease;
+        }
+
+        /* Camera Status Display */
+        .camera-status {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+            font-size: 0.85em;
+            text-align: center;
+        }
+
+        .camera-status.error {
+            background: rgba(255, 107, 107, 0.2);
+            color: #ff6b6b;
+            border: 1px solid rgba(255, 107, 107, 0.3);
+        }
+
+        .camera-status.success {
+            background: rgba(56, 239, 125, 0.2);
+            color: #38ef7d;
+            border: 1px solid rgba(56, 239, 125, 0.3);
+        }
+
+        .camera-status.warning {
+            background: rgba(255, 165, 0, 0.2);
+            color: #ffa500;
+            border: 1px solid rgba(255, 165, 0, 0.3);
+        }
+
+        .camera-status.info {
+            background: rgba(74, 158, 255, 0.2);
+            color: #4a9eff;
+            border: 1px solid rgba(74, 158, 255, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <h1 style="margin-bottom:5px;">📞 SVphone v08.00</h1>
+                <p class="subtitle" style="margin:0;">Decentralized Voice Calling on BSV Blockchain</p>
+            </div>
+            <div style="display:flex; gap:8px; flex-shrink:0;">
+                <a href="wallet.html" style="background:#238636; color:#fff; padding:8px 16px; border-radius:4px; text-decoration:none; font-weight:600; white-space:nowrap;">💼 Wallet</a>
+                <a href="index.html" style="background:#4a9eff; color:#fff; padding:8px 16px; border-radius:4px; text-decoration:none; font-weight:600; white-space:nowrap;">Test Suite</a>
+            </div>
+        </header>
+
+        <div class="main-grid">
+            <!-- Left Panel: Call Controls -->
+            <div class="panel">
+                <h2>Call Controls</h2>
+
+                <div class="form-group">
+                    <label for="myAddress">Your BSV Address <span style="opacity:0.7;">(from wallet.html)</span></label>
+                    <input type="text" id="myAddress" placeholder="(auto-populated from wallet)"
+                           readonly style="opacity:0.8;">
+                </div>
+
+                <div class="form-group">
+                    <label for="myIp">Your Public IP</label>
+                    <input type="text" id="myIp" placeholder="Will be auto-detected">
+                </div>
+
+                <div class="form-group">
+                    <label for="myPort">UDP Port</label>
+                    <input type="number" id="myPort" placeholder="Ephemeral port">
+                </div>
+
+                <!-- Microphone Test Section -->
+                <div class="mic-test-section" id="micTestSection">
+                    <div class="section-header" onclick="app.toggleMicTest()">
+                        <h3>🎤 Microphone Test</h3>
+                        <span class="toggle-icon collapsed" id="micTestToggle">▼</span>
+                    </div>
+
+                    <div class="mic-test-content collapsed" id="micTestContent">
+                        <!-- Test Control Buttons -->
+                        <div class="button-group" style="grid-template-columns: 1fr 1fr; margin-bottom: 15px;">
+                            <button class="btn-primary" id="startMicTestBtn" onclick="app.startMicTest()">
+                                🎤 Start Test
+                            </button>
+                            <button class="btn-danger" id="stopMicTestBtn" onclick="app.stopMicTest()"
+                                    style="display:none;">
+                                ⏹ Stop Test
+                            </button>
+                        </div>
+
+                        <!-- Audio Level Meter -->
+                        <div class="meter-container">
+                            <label>Input Level</label>
+                            <canvas id="micLevelMeter" width="400" height="40"></canvas>
+                            <div class="level-indicator" id="levelIndicator">- dB</div>
+                        </div>
+
+                        <!-- Volume Control Slider -->
+                        <div class="form-group">
+                            <label for="micVolumeSlider">
+                                Input Gain: <span id="volumeValue">100%</span>
+                            </label>
+                            <input type="range" id="micVolumeSlider" class="volume-slider"
+                                   min="0" max="200" value="100" step="1"
+                                   oninput="app.updateMicVolume(this.value)"
+                                   disabled>
+                        </div>
+
+                        <!-- Mute Toggle -->
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="micMuteCheckbox"
+                                       onchange="app.toggleMicMute(this.checked)"
+                                       disabled>
+                                <span>Mute Microphone</span>
+                            </label>
+                        </div>
+
+                        <!-- Recording Controls -->
+                        <div class="recording-section" id="recordingSection" style="display:none;">
+                            <div class="button-group" style="grid-template-columns: 1fr 1fr 1fr;">
+                                <button class="btn-warning" id="startRecordBtn"
+                                        onclick="app.startRecording()">
+                                    ⏺ Record
+                                </button>
+                                <button class="btn-danger" id="stopRecordBtn"
+                                        onclick="app.stopRecording()" disabled>
+                                    ⏹ Stop
+                                </button>
+                                <button class="btn-success" id="playRecordBtn"
+                                        onclick="app.playRecording()" disabled>
+                                    ▶ Play
+                                </button>
+                            </div>
+                            <div class="recording-status">
+                                <span id="recordingTime">0:00 / 0:10</span>
+                            </div>
+                        </div>
+
+                        <!-- Status Display -->
+                        <div class="mic-status" id="micTestStatus">
+                            <small>Click "Start Test" to check your microphone</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Camera Test Section -->
+                <div class="camera-test-section" id="cameraTestSection">
+                    <div class="section-header" onclick="app.toggleCameraTest()">
+                        <h3>📹 Camera Test</h3>
+                        <span class="toggle-icon collapsed" id="cameraTestToggle">▼</span>
+                    </div>
+
+                    <div class="camera-test-content collapsed" id="cameraTestContent">
+                        <!-- Test Control Buttons -->
+                        <div class="button-group" style="grid-template-columns: 1fr 1fr; margin-bottom: 15px;">
+                            <button class="btn-primary" id="startCameraTestBtn" onclick="app.startCameraTest()">
+                                🎥 Start Test
+                            </button>
+                            <button class="btn-danger" id="stopCameraTestBtn" onclick="app.stopCameraTest()"
+                                    style="display:none;">
+                                ⏹ Stop Test
+                            </button>
+                        </div>
+
+                        <!-- Video Preview -->
+                        <div class="video-preview-container">
+                            <video id="cameraPreview" autoplay muted playsinline></video>
+                        </div>
+
+                        <!-- Resolution Selector -->
+                        <div class="form-group">
+                            <label for="cameraResolution">Resolution:</label>
+                            <select id="cameraResolution" onchange="app.changeCameraResolution(this.value)" disabled>
+                                <option value="vhd">VHD (1920×1080, 60fps)</option>
+                                <option value="hd" selected>HD (1280×720, 30fps)</option>
+                                <option value="sd">SD (640×480, 24fps)</option>
+                                <option value="ld">LD (320×240, 15fps)</option>
+                            </select>
+                        </div>
+
+                        <!-- View Mode Buttons -->
+                        <div class="button-group" style="grid-template-columns: 1fr 1fr; margin-bottom: 10px;">
+                            <button class="btn-success" id="toggleSizeBtn" onclick="app.toggleCameraSize()" disabled>
+                                📐 Full-Size
+                            </button>
+                            <button class="btn-warning" id="fullscreenBtn" onclick="app.enterCameraFullscreen()" disabled>
+                                ⛶ Fullscreen
+                            </button>
+                        </div>
+
+                        <!-- Status Display -->
+                        <div class="camera-status" id="cameraTestStatus">
+                            <small>Click "Start Test" to check your camera</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="quality">Preferred Quality</label>
+                    <select id="quality">
+                        <option value="hd" selected>HD (2.5 Mbps, 30fps, 1280×720)</option>
+                        <option value="vhd">VHD (5 Mbps, 60fps, 1920×1080)</option>
+                        <option value="sd">SD (500 kbps, 24fps, 640×480)</option>
+                        <option value="ld">LD (100 kbps, 15fps, 320×240)</option>
+                    </select>
+                </div>
+
+                <!-- Available CALL Tokens Section -->
+                <div id="availableTokensSection" class="form-group" style="display:none;">
+                    <label for="callTokenSelector">Available Call Tokens (<span id="availableTokenCount">0</span>)</label>
+                    <select id="callTokenSelector" style="width: 100%; padding: 10px 12px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; background: rgba(30, 60, 114, 0.6); color: #fff; font-size: 0.95em; font-weight: 500; display: block; box-sizing: border-box; margin-bottom: 8px;">
+                        <option value="">-- Use existing token (optional) --</option>
+                    </select>
+                    <small style="color: #8b949e; display: block; margin-top: 4px;">Select a token to reuse instead of minting new ones</small>
+                </div>
+
+                <button class="btn-primary" id="initiateCallBtn" onclick="app.initializeCall()">☎️ Make a Call</button>
+                <button class="btn-primary" onclick="app.toggleMediaStream()" id="mediaBtn">🎤 Start Media</button>
+
+                <div class="form-group">
+                    <label for="calleeAddress">CALL BSV Address</label>
+                    <input type="text" id="calleeAddress" placeholder="Enter address to call" style="width: 100%; padding: 10px 12px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; background: rgba(30, 60, 114, 0.6); color: #fff; font-size: 0.95em; font-weight: 500; display: block; box-sizing: border-box; margin-bottom: 8px;">
+                    <button id="lastCalledBtn" style="background: #30363d; padding: 8px 12px; border-radius: 4px; color: #8b949e; cursor: pointer; display: none; white-space: nowrap; margin-bottom: 8px;" onclick="app.quickDial()">↲ Redial: <span id="lastCalledBtnText"></span></button>
+                    <div id="lastCalledInfo" style="font-size: 0.85em; color: #8b949e; display: none;">
+                        Last called: <strong id="lastCalledAddress"></strong>
+                    </div>
+                </div>
+
+                <div class="call-status" id="callStatus" style="display:none;">
+                    <span id="callStatusText">Initializing...</span>
+                </div>
+
+                <button class="btn-success" id="acceptBtn" onclick="app.acceptCall()" style="display:none;">✓ Accept</button>
+                <button class="btn-danger" id="rejectBtn" onclick="app.rejectCall()" style="display:none;">✗ Reject</button>
+                <button class="btn-danger" id="endCallBtn" onclick="app.endCall()" style="display:none;">End Call</button>
+
+                <div id="incomingCall" class="incoming-call" style="display:none;">
+                    <h3>📞 Incoming Call</h3>
+                    <p>From: <strong id="incomingFrom"></strong></p>
+                    <div class="button-group">
+                        <button class="btn-success" onclick="app.acceptCall()">Accept</button>
+                        <button class="btn-danger" onclick="app.rejectCall()">Reject</button>
+                    </div>
+                </div>
+
+                <div class="status-panel">
+                    <div class="status-item">
+                        <span class="status-label">Status:</span>
+                        <span class="status-value" id="statusValue">Ready</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Quality:</span>
+                        <span class="status-value" id="qualityValue">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Duration:</span>
+                        <span class="status-value" id="durationValue">0s</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Encryption:</span>
+                        <span class="status-value" id="encryptionValue">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Statistics & Media -->
+            <div class="panel">
+                <h2>Call Statistics & Media</h2>
+
+                <div class="video-container" id="videoContainer" style="display:none;">
+                    <div>
+                        <div class="video-label">Local Camera</div>
+                        <video id="localVideo" autoplay muted playsinline></video>
+                    </div>
+                    <div>
+                        <div class="video-label">Remote Camera</div>
+                        <video id="remoteVideo" autoplay playsinline></video>
+                    </div>
+                </div>
+
+                <div class="stats-grid" id="statsGrid" style="display:none;">
+                    <div class="stat-box">
+                        <div class="stat-label">Video Bitrate</div>
+                        <div class="stat-value" id="videoBitrate">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Audio Bitrate</div>
+                        <div class="stat-value" id="audioBitrate">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Packet Loss</div>
+                        <div class="stat-value" id="packetLoss">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Latency (RTT)</div>
+                        <div class="stat-value" id="latency">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Available BW</div>
+                        <div class="stat-value" id="bandwidth">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Jitter</div>
+                        <div class="stat-value" id="jitter">-</div>
+                    </div>
+                </div>
+
+                <div class="status-panel">
+                    <div class="status-item">
+                        <span class="status-label">Audio Codec:</span>
+                        <span class="status-value" id="audioCodec">Opus</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Video Codec:</span>
+                        <span class="status-value" id="videoCodec">VP9</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Frame Rate:</span>
+                        <span class="status-value" id="frameRate">-</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Resolution:</span>
+                        <span class="status-value" id="resolution">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Console -->
+        <div class="panel">
+            <h2>Debug Console</h2>
+            <div class="console" id="debugConsole"></div>
+            <button class="btn-warning" onclick="app.clearConsole()" style="margin-top:10px; width: auto;">Clear Console</button>
+        </div>
+    </div>
+
+    <!-- External Script Loading (v08.00) -->
+
+    <!-- Wallet and Token Infrastructure -->
+    <script src="bundle.js"></script>
+
+    <!-- SV Connect Signaling and Media Modules -->
+    <script src="src/sv_connect/signaling.js"></script>
+    <script src="src/sv_connect/microphone_tester.js"></script>
+    <script src="src/sv_connect/camera_tester.js"></script>
+    <script src="src/sv_connect/call_manager.js"></script>
+    <script src="src/sv_connect/peer_connection.js"></script>
+    <script src="src/sv_connect/codec_negotiation.js"></script>
+    <script src="src/sv_connect/quality_adaptation.js"></script>
+    <script src="src/sv_connect/media_security.js"></script>
+    <script src="src/sv_connect/call_token.js"></script>
+
+    <!-- Phone UI Layers (Refactored from inline SVphoneApp) -->
+    <script src="src/phone-ui.js"></script>
+    <script src="src/phone-handlers.js"></script>
+    <script src="src/phone-controller.js"></script>
+
+    <!-- Legacy placeholder (no inline script) -->
+    <script>
+        // All application logic moved to external files
+        // See: src/phone-ui.js, src/phone-handlers.js, src/phone-controller.js
+
+        /**
+         * SVphone Phone Interface Application (v08.00)
+         *
+         * Previous inline SVphoneApp class has been refactored into:
+         * - PhoneUI: UI rendering and DOM state management
+         * - CallHandlers: Call event handlers
+         * - MicrophoneTestHandlers: Microphone test handlers
+         * - CameraTestHandlers: Camera test handlers
+         * - PhoneController: Application orchestration and initialization
+         *
+         * The application initializes automatically when the DOM is ready.
+         * See phone-controller.js for the PhoneController class and initialization logic.
+         */
+
+        // Application initialization has moved to phone-controller.js
+        // This file now only contains HTML markup and script loading order
+
+    </script>
+</body>
+</html>

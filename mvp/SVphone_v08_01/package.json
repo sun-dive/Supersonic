@@ -1,0 +1,17 @@
+{
+  "name": "svphone-v08-00",
+  "version": "0.8.00",
+  "description": "SVphone v08.00",
+  "type": "module",
+  "scripts": {
+    "serve": "node serve.mjs",
+    "dev": "node serve.mjs"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.3",
+    "typescript": "^5.9.3"
+  }
+}
