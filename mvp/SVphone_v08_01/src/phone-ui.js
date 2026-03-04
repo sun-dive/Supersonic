@@ -176,6 +176,9 @@ class PhoneUI {
         this.buttonElements.rejectBtn.style.display = 'inline-block'
         this.updateCallStatus('ringing', '📞 Incoming call...')
         this.log(`📞 Incoming call from: ${caller}`, 'info')
+        // Pre-fill callee field so user can call back after the call ends
+        const calleeField = this.addressElements.calleeAddress
+        if (calleeField && !calleeField.value) calleeField.value = caller
     }
 
     /**
