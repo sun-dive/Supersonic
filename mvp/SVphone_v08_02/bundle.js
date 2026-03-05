@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 09:02 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 09:02 UTC';});console.log('[SVphone] Build: 2026-03-05 09:02 UTC');
+window.SVPHONE_BUILD="2026-03-05 09:17 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 09:17 UTC';});console.log('[SVphone] Build: 2026-03-05 09:17 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -22094,6 +22094,11 @@ class CallHandlers {
 
             if (this.app._incomingTimeout) { clearTimeout(this.app._incomingTimeout); this.app._incomingTimeout = null }
             const callTokenId = this.app.currentCallToken
+
+            // Dismiss incoming call UI immediately so user can't double-click Accept
+            document.getElementById('incomingCall').style.display = 'none'
+            document.getElementById('acceptBtn').style.display = 'none'
+            document.getElementById('rejectBtn').style.display = 'none'
 
             // Ensure signaling has callee's IP/port — signaling.initialize() is only called
             // on the caller side (initializeCall), so callee must set these before accepting.

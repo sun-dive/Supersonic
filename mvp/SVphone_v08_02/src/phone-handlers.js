@@ -157,6 +157,11 @@ class CallHandlers {
             if (this.app._incomingTimeout) { clearTimeout(this.app._incomingTimeout); this.app._incomingTimeout = null }
             const callTokenId = this.app.currentCallToken
 
+            // Dismiss incoming call UI immediately so user can't double-click Accept
+            document.getElementById('incomingCall').style.display = 'none'
+            document.getElementById('acceptBtn').style.display = 'none'
+            document.getElementById('rejectBtn').style.display = 'none'
+
             // Ensure signaling has callee's IP/port — signaling.initialize() is only called
             // on the caller side (initializeCall), so callee must set these before accepting.
             const myIp = document.getElementById('myIp')?.value
