@@ -47,6 +47,9 @@ class CallHandlers {
             this.ui.updateCallButtonStatus('calling')
             this.ui.log(`📞 Calling ${calleeAddress}... (${callMode})`, 'info')
 
+            // Start outgoing ring immediately — before ICE/TX which takes several seconds
+            this.ui.startOutgoingRing()
+
             const session = await this.app.callManager.initiateCall(calleeAddress, {
                 audio: true,
                 video,
@@ -56,9 +59,6 @@ class CallHandlers {
 
             this.app.currentCallToken = session.callTokenId
             this.ui.log('✓ Call initiated successfully', 'success')
-
-            // Start outgoing ring and 3-minute unanswered timeout
-            this.ui.startOutgoingRing()
             this.app._unansweredTimeout = setTimeout(() => {
                 this.ui.stopOutgoingRing()
                 this.ui.log('⏱ No answer — call timed out', 'warning')
@@ -76,6 +76,7 @@ class CallHandlers {
                     const calleeAddress = document.getElementById('calleeAddress').value
                     const callMode2 = document.getElementById('callMode')?.value || 'video-hd'
                     const quality2  = callMode2.endsWith('hd') ? 'hd' : 'ld'
+                    this.ui.startOutgoingRing()
                     const session = await this.app.callManager.initiateCall(calleeAddress, {
                         audio: true,
                         video: false,
@@ -85,7 +86,6 @@ class CallHandlers {
                     })
                     this.app.currentCallToken = session.callTokenId
                     this.ui.log('✓ Audio-only call initiated', 'success')
-                    this.ui.startOutgoingRing()
                     this.app._unansweredTimeout = setTimeout(() => {
                         this.ui.stopOutgoingRing()
                         this.ui.log('⏱ No answer — call timed out', 'warning')
@@ -157,7 +157,8 @@ class CallHandlers {
             if (this.app._incomingTimeout) { clearTimeout(this.app._incomingTimeout); this.app._incomingTimeout = null }
             const callTokenId = this.app.currentCallToken
 
-            // Dismiss incoming call UI immediately so user can't double-click Accept
+            // Dismiss incoming call UI and stop ringtone immediately
+            this.ui.stopRingtone()
             document.getElementById('incomingCall').style.display = 'none'
             document.getElementById('acceptBtn').style.display = 'none'
             document.getElementById('rejectBtn').style.display = 'none'
