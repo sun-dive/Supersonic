@@ -256,6 +256,31 @@ class PeerConnection extends EventEmitter {
         const state = peerConnection.iceConnectionState
         console.log('[PeerConnection] ICE connection state:', peerId, state)
         this.emit('ice:state-changed', { peerId, state })
+
+        // On failure, dump all candidate pairs so we can see what was tried
+        if (state === 'failed') {
+          peerConnection.getStats().then(stats => {
+            const pairs = []
+            const locals = new Map()
+            const remotes = new Map()
+            stats.forEach(s => {
+              if (s.type === 'local-candidate')  locals.set(s.id, s)
+              if (s.type === 'remote-candidate') remotes.set(s.id, s)
+            })
+            stats.forEach(s => {
+              if (s.type !== 'candidate-pair') return
+              const l = locals.get(s.localCandidateId)
+              const r = remotes.get(s.remoteCandidateId)
+              pairs.push({
+                state: s.state,
+                local:  l ? `${l.candidateType} ${l.address ?? l.ip}:${l.port}` : '?',
+                remote: r ? `${r.candidateType} ${r.address ?? r.ip}:${r.port}` : '?',
+                nominated: s.nominated
+              })
+            })
+            this.emit('ice:pairs-on-failure', { peerId, pairs })
+          }).catch(() => {})
+        }
       }
 
       // ICE gathering state

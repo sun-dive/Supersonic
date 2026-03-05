@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 22:32 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 22:32 UTC';});console.log('[SVphone] Build: 2026-03-05 22:32 UTC');
+window.SVPHONE_BUILD="2026-03-05 22:59 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 22:59 UTC';});console.log('[SVphone] Build: 2026-03-05 22:59 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -18944,6 +18944,12 @@ class CallManager extends EventEmitter {
     this.peerConnection.on('ice:gathering-changed', ({ peerId, state }) => {
       this.emit('call:log', { msg: `[ICE] gathering: ${state}`, type: 'info' })
     })
+    this.peerConnection.on('ice:pairs-on-failure', ({ peerId, pairs }) => {
+      this.emit('call:log', { msg: `[ICE] ${pairs.length} pair(s) tried:`, type: 'error' })
+      for (const p of pairs) {
+        this.emit('call:log', { msg: `  ${p.state} L:${p.local} → R:${p.remote}`, type: 'error' })
+      }
+    })
   }
 
   /**
@@ -19785,6 +19791,31 @@ class PeerConnection extends EventEmitter {
         const state = peerConnection.iceConnectionState
         console.log('[PeerConnection] ICE connection state:', peerId, state)
         this.emit('ice:state-changed', { peerId, state })
+
+        // On failure, dump all candidate pairs so we can see what was tried
+        if (state === 'failed') {
+          peerConnection.getStats().then(stats => {
+            const pairs = []
+            const locals = new Map()
+            const remotes = new Map()
+            stats.forEach(s => {
+              if (s.type === 'local-candidate')  locals.set(s.id, s)
+              if (s.type === 'remote-candidate') remotes.set(s.id, s)
+            })
+            stats.forEach(s => {
+              if (s.type !== 'candidate-pair') return
+              const l = locals.get(s.localCandidateId)
+              const r = remotes.get(s.remoteCandidateId)
+              pairs.push({
+                state: s.state,
+                local:  l ? `${l.candidateType} ${l.address ?? l.ip}:${l.port}` : '?',
+                remote: r ? `${r.candidateType} ${r.address ?? r.ip}:${r.port}` : '?',
+                nominated: s.nominated
+              })
+            })
+            this.emit('ice:pairs-on-failure', { peerId, pairs })
+          }).catch(() => {})
+        }
       }
 
       // ICE gathering state

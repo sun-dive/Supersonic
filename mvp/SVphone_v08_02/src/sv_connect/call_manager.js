@@ -63,6 +63,12 @@ class CallManager extends EventEmitter {
     this.peerConnection.on('ice:gathering-changed', ({ peerId, state }) => {
       this.emit('call:log', { msg: `[ICE] gathering: ${state}`, type: 'info' })
     })
+    this.peerConnection.on('ice:pairs-on-failure', ({ peerId, pairs }) => {
+      this.emit('call:log', { msg: `[ICE] ${pairs.length} pair(s) tried:`, type: 'error' })
+      for (const p of pairs) {
+        this.emit('call:log', { msg: `  ${p.state} L:${p.local} → R:${p.remote}`, type: 'error' })
+      }
+    })
   }
 
   /**
