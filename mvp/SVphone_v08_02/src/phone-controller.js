@@ -316,6 +316,8 @@ class PhoneController {
      */
     bindEvents() {
         // ========== Call Manager Events ==========
+        this.callManager.on('call:log', ({ msg, type }) => this.ui.log(msg, type))
+
         this.callManager.on('call:initiated-session', (session) => {
             this.ui.log(`📞 Call initiated to ${session.calleeAddress}`, 'info')
             this.currentCallToken = session.callTokenId
@@ -352,9 +354,10 @@ class PhoneController {
                         this.ui.log('✓ WebRTC handshake complete, ICE connecting...', 'success')
                         // Inject callee's public IP as srflx candidates (NAT traversal without STUN)
                         if (session.calleeIp4 || session.calleeIp6) {
-                            console.log(`[ICE] Callee IPs — ip4: ${session.calleeIp4 ?? 'none'}, ip6: ${session.calleeIp6 ?? 'none'}`)
+                            this.ui.log(`[ICE] Callee ip4: ${session.calleeIp4 ?? 'none'} ip6: ${session.calleeIp6 ?? 'none'}`, 'info')
                             const pubCandidates = this.peerConnection._buildPublicIpCandidates(
-                                session.sdpAnswer, session.calleeIp4 ?? null, session.calleeIp6 ?? null
+                                session.sdpAnswer, session.calleeIp4 ?? null, session.calleeIp6 ?? null,
+                                this.ui.log.bind(this.ui)
                             )
                             for (const c of pubCandidates) {
                                 this.peerConnection.addIceCandidate(remoteAddress, c)

@@ -396,7 +396,8 @@ class PeerConnection extends EventEmitter {
    * @param {string|null} publicIp6 - Remote peer's public IPv6 (or null)
    * @returns {Array<{candidate, sdpMid, sdpMLineIndex}>}
    */
-  _buildPublicIpCandidates(sdp, publicIp4, publicIp6) {
+  _buildPublicIpCandidates(sdp, publicIp4, publicIp6, uiLog = null) {
+    const log = (msg) => { console.log(msg); if (uiLog) uiLog(msg, 'info') }
     // Legacy single-IP call: detect type and route to correct slot
     if (publicIp4 && !publicIp6 && publicIp4.includes(':')) {
       publicIp6 = publicIp4; publicIp4 = null
@@ -434,7 +435,7 @@ class PeerConnection extends EventEmitter {
         const mid = sdpMid ?? String(Math.max(0, sdpMLineIndex))
         const mIdx = Math.max(0, sdpMLineIndex)
 
-        console.log(`[ICE] srflx: ${localIp}:${port} → public ${publicIp}:${port}`)
+        log(`[ICE] srflx: ${localIp}:${port} → public ${publicIp}:${port}`)
         candidates.push({
           candidate: `candidate:pub${port} ${component} UDP 1677729535 ${publicIp} ${port} typ srflx raddr ${localIp} rport ${port}`,
           sdpMid: mid,
@@ -447,7 +448,7 @@ class PeerConnection extends EventEmitter {
         // creates a peer-reflexive candidate, and responds back — enabling bidirectional ICE.
         if (!isIpv6Host && publicIp4 && !publicIp6) {
           const nat64Ip = this._ipv4ToNat64(publicIp4)
-          console.log(`[ICE] nat64: ${localIp}:${port} → ${nat64Ip}:${port}`)
+          log(`[ICE] nat64: ${localIp}:${port} → ${nat64Ip}:${port}`)
           candidates.push({
             candidate: `candidate:nat${port} ${component} UDP 1677000000 ${nat64Ip} ${port} typ srflx raddr ${localIp} rport ${port}`,
             sdpMid: mid,
@@ -458,7 +459,7 @@ class PeerConnection extends EventEmitter {
     }
 
     const label = [publicIp4, publicIp6].filter(Boolean).join(' / ')
-    console.log(`[PeerConnection] Built ${candidates.length} public-IP candidates for ${label}`)
+    log(`[ICE] Built ${candidates.length} candidates for remote ${label}`)
     return candidates
   }
 

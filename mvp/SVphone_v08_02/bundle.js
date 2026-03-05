@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 13:50 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 13:50 UTC';});console.log('[SVphone] Build: 2026-03-05 13:50 UTC');
+window.SVPHONE_BUILD="2026-03-05 13:54 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 13:54 UTC';});console.log('[SVphone] Build: 2026-03-05 13:54 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -19108,9 +19108,10 @@ class CallManager extends EventEmitter {
           // Inject caller's public IP as srflx candidates so ICE can traverse NAT
           // without STUN — works on full-cone / address-restricted NAT (typical home broadband).
           if (callToken.senderIp4 || callToken.senderIp6) {
-            console.log(`[ICE] Caller IPs — ip4: ${callToken.senderIp4 ?? 'none'}, ip6: ${callToken.senderIp6 ?? 'none'}`)
+            const iceLog = (msg, type = 'info') => this.emit('call:log', { msg, type })
+            iceLog(`[ICE] Caller ip4: ${callToken.senderIp4 ?? 'none'} ip6: ${callToken.senderIp6 ?? 'none'}`)
             const pubCandidates = this.peerConnection._buildPublicIpCandidates(
-              callToken.sdpOffer.sdp, callToken.senderIp4 ?? null, callToken.senderIp6 ?? null
+              callToken.sdpOffer.sdp, callToken.senderIp4 ?? null, callToken.senderIp6 ?? null, iceLog
             )
             for (const c of pubCandidates) {
               this.peerConnection.addIceCandidate(callToken.caller, c)
@@ -19837,7 +19838,8 @@ class PeerConnection extends EventEmitter {
    * @param {string|null} publicIp6 - Remote peer's public IPv6 (or null)
    * @returns {Array<{candidate, sdpMid, sdpMLineIndex}>}
    */
-  _buildPublicIpCandidates(sdp, publicIp4, publicIp6) {
+  _buildPublicIpCandidates(sdp, publicIp4, publicIp6, uiLog = null) {
+    const log = (msg) => { console.log(msg); if (uiLog) uiLog(msg, 'info') }
     // Legacy single-IP call: detect type and route to correct slot
     if (publicIp4 && !publicIp6 && publicIp4.includes(':')) {
       publicIp6 = publicIp4; publicIp4 = null
@@ -19875,7 +19877,7 @@ class PeerConnection extends EventEmitter {
         const mid = sdpMid ?? String(Math.max(0, sdpMLineIndex))
         const mIdx = Math.max(0, sdpMLineIndex)
 
-        console.log(`[ICE] srflx: ${localIp}:${port} → public ${publicIp}:${port}`)
+        log(`[ICE] srflx: ${localIp}:${port} → public ${publicIp}:${port}`)
         candidates.push({
           candidate: `candidate:pub${port} ${component} UDP 1677729535 ${publicIp} ${port} typ srflx raddr ${localIp} rport ${port}`,
           sdpMid: mid,
@@ -19888,7 +19890,7 @@ class PeerConnection extends EventEmitter {
         // creates a peer-reflexive candidate, and responds back — enabling bidirectional ICE.
         if (!isIpv6Host && publicIp4 && !publicIp6) {
           const nat64Ip = this._ipv4ToNat64(publicIp4)
-          console.log(`[ICE] nat64: ${localIp}:${port} → ${nat64Ip}:${port}`)
+          log(`[ICE] nat64: ${localIp}:${port} → ${nat64Ip}:${port}`)
           candidates.push({
             candidate: `candidate:nat${port} ${component} UDP 1677000000 ${nat64Ip} ${port} typ srflx raddr ${localIp} rport ${port}`,
             sdpMid: mid,
@@ -19899,7 +19901,7 @@ class PeerConnection extends EventEmitter {
     }
 
     const label = [publicIp4, publicIp6].filter(Boolean).join(' / ')
-    console.log(`[PeerConnection] Built ${candidates.length} public-IP candidates for ${label}`)
+    log(`[ICE] Built ${candidates.length} candidates for remote ${label}`)
     return candidates
   }
 
@@ -22816,6 +22818,8 @@ class PhoneController {
      */
     bindEvents() {
         // ========== Call Manager Events ==========
+        this.callManager.on('call:log', ({ msg, type }) => this.ui.log(msg, type))
+
         this.callManager.on('call:initiated-session', (session) => {
             this.ui.log(`📞 Call initiated to ${session.calleeAddress}`, 'info')
             this.currentCallToken = session.callTokenId
@@ -22852,9 +22856,10 @@ class PhoneController {
                         this.ui.log('✓ WebRTC handshake complete, ICE connecting...', 'success')
                         // Inject callee's public IP as srflx candidates (NAT traversal without STUN)
                         if (session.calleeIp4 || session.calleeIp6) {
-                            console.log(`[ICE] Callee IPs — ip4: ${session.calleeIp4 ?? 'none'}, ip6: ${session.calleeIp6 ?? 'none'}`)
+                            this.ui.log(`[ICE] Callee ip4: ${session.calleeIp4 ?? 'none'} ip6: ${session.calleeIp6 ?? 'none'}`, 'info')
                             const pubCandidates = this.peerConnection._buildPublicIpCandidates(
-                                session.sdpAnswer, session.calleeIp4 ?? null, session.calleeIp6 ?? null
+                                session.sdpAnswer, session.calleeIp4 ?? null, session.calleeIp6 ?? null,
+                                this.ui.log.bind(this.ui)
                             )
                             for (const c of pubCandidates) {
                                 this.peerConnection.addIceCandidate(remoteAddress, c)
