@@ -164,29 +164,14 @@ class CallHandlers {
             if (myIp) this.app.signaling.myIp = myIp
             if (myPort) this.app.signaling.myPort = myPort
 
-            // broadcastAnswerFn: send answer inscription back to caller
+            // broadcastAnswerFn: send answer signal back to caller
             const broadcastAnswerFn = async (_callTokenId, callerAddress, answerData) => {
-                this.ui.log(`📤 Sending answer inscription to caller...`, 'info')
-                const answerCallData = {
-                    v: 1,
-                    proto: 'svphone',
-                    type: 'answer',
-                    caller: callerAddress,
+                this.ui.log(`📤 Sending answer signal to caller...`, 'info')
+                const answerWithCallee = {
+                    ...answerData,
                     callee: this.app.signaling.myAddress,
-                    ip: answerData.senderIp,
-                    port: answerData.senderPort,
-                    key: answerData.sessionKey,
-                    codec: answerData.codec,
-                    quality: answerData.quality,
-                    media: answerData.mediaTypes,
-                    sdp: answerData.sdpAnswer,
                 }
-                const result = await window.inscriptionBuilder.buildAndBroadcast(
-                    answerCallData,
-                    callerAddress,
-                    window.provider,
-                    window.myKey,
-                )
+                const result = await this.app.callTokenManager.broadcastCallAnswer(callerAddress, answerWithCallee)
                 this.ui.log(`✓ Answer sent: ${result.txId}`, 'success')
                 return result
             }

@@ -411,11 +411,11 @@ class PhoneController {
      * Start background polling for incoming calls
      */
     async startBackgroundPolling() {
-        // Start listening for incoming call inscriptions in background
-        // This runs continuously so recipient can receive calls anytime
+        // Start listening for incoming call signals in background.
+        // This runs continuously so recipient can receive calls anytime.
         const myAddress = document.getElementById('myAddress')?.value
 
-        if (!window.inscriptionBuilder || !window.provider || !myAddress) {
+        if (!window.tokenBuilder || !window.provider || !myAddress || !this.callTokenManager) {
             this.ui.log(`⏳ Waiting for wallet to load (will retry in 2s)...`, 'warning')
             setTimeout(() => this.startBackgroundPolling(), 2000)
             return
@@ -430,18 +430,18 @@ class PhoneController {
             const seenTxIds = new Set()
 
             // Pre-seed seenTxIds with the current address history so that TXs already
-            // on-chain when polling starts are ignored.  Only inscriptions that arrive
+            // on-chain when polling starts are ignored.  Only signals that arrive
             // AFTER this point (new calls/answers) will be processed.
             try {
                 const initialHistory = await window.provider.getAddressHistory()
                 for (const { txId } of initialHistory) seenTxIds.add(txId)
-                console.log(`[Poll] Pre-seeded ${seenTxIds.size} existing txIds — will only process new inscriptions`)
+                console.log(`[Poll] Pre-seeded ${seenTxIds.size} existing txIds — will only process new signals`)
             } catch (e) {
                 console.warn('[Poll] Could not pre-seed seenTxIds:', e.message)
             }
 
-            // Scan address history for SVphone call/answer inscriptions
-            const scanInscriptionsFn = async (address) => {
+            // Scan address history for SVphone call/answer OP_RETURN signals
+            const scanSignalsFn = async (address) => {
                 if (!address) return []
 
                 const history = await window.provider.getAddressHistory()
@@ -454,15 +454,46 @@ class PhoneController {
                     try {
                         const tx = await window.provider.getSourceTransaction(txId)
                         // Cap seenTxIds to prevent unbounded growth over long sessions
-                    if (seenTxIds.size > 500) {
-                        const oldest = seenTxIds.values().next().value
-                        seenTxIds.delete(oldest)
-                    }
-                    seenTxIds.add(txId) // Only mark seen after successful fetch
-                        const inscription = window.inscriptionBuilder.scanTxForCallInscription(tx, address)
-                        console.log(`[Poll] ${txId.slice(0,12)}… inscription=${inscription ? JSON.stringify(inscription).slice(0,80) : 'null'}`)
-                        if (inscription) {
-                            results.push({ txId, inscription })
+                        if (seenTxIds.size > 500) {
+                            const oldest = seenTxIds.values().next().value
+                            seenTxIds.delete(oldest)
+                        }
+                        seenTxIds.add(txId) // Only mark seen after successful fetch
+
+                        // Scan outputs for P OP_RETURN call signals
+                        let signal = null
+                        for (const output of tx.outputs) {
+                            if (!output.lockingScript) continue
+                            const decoded = window.decodeOpReturn(output.lockingScript)
+                            if (!decoded) continue
+                            const name = decoded.tokenName
+                            if (!name?.startsWith('CALL-') && !name?.startsWith('ANS-')) continue
+
+                            const attrs = this.callTokenManager.decodeCallAttributes(decoded.tokenAttributes)
+                            if (!attrs?.senderIp) continue
+
+                            const isCall = name.startsWith('CALL-') && attrs.callee === address
+                            const isAnswer = name.startsWith('ANS-') && attrs.caller === address
+                            if (!isCall && !isAnswer) continue
+
+                            signal = {
+                                type: isCall ? 'call' : 'answer',
+                                caller: attrs.caller,
+                                callee: attrs.callee,
+                                ip: attrs.senderIp,
+                                port: attrs.senderPort,
+                                key: attrs.sessionKey,
+                                codec: attrs.codec,
+                                quality: attrs.quality,
+                                media: attrs.mediaTypes,
+                                sdp: attrs.sdpOffer,
+                            }
+                            break
+                        }
+
+                        console.log(`[Poll] ${txId.slice(0,12)}… signal=${signal ? JSON.stringify(signal).slice(0,80) : 'null'}`)
+                        if (signal) {
+                            results.push({ txId, inscription: signal })
                         }
                     } catch (e) {
                         console.warn(`[Poll] fetch failed for ${txId.slice(0,12)}…:`, e.message)
@@ -472,8 +503,8 @@ class PhoneController {
                 return results
             }
 
-            // Start polling (5 second interval)
-            this.signaling.startPolling(scanInscriptionsFn)
+            // Start polling
+            this.signaling.startPolling(scanSignalsFn)
             this.ui.log('📞 Background polling for incoming calls started', 'success')
             // call:incoming and call:answered are forwarded by CallManager via
             // call:incoming-session and call:answered-session — handled in bindEvents()

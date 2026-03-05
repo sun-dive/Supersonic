@@ -1903,6 +1903,84 @@ export class TokenBuilder {
     })
   }
 
+  // ── Call Signal TX ────────────────────────────────────────────
+
+  /**
+   * Build and broadcast a single-TX call signal using the P OP_RETURN format.
+   * No genesis+transfer; the signal goes directly to recipientAddress in one TX.
+   *
+   * TX structure:
+   *   Output 0: OP_RETURN (0 sats) — P v03 format with call/answer data
+   *   Output 1: P2PKH 1-sat → recipientAddress (WoC address history indexing)
+   *   Output 2: P2PKH change → caller
+   *
+   * @param tokenName       "CALL-{ident}" or "ANS-{ident}"
+   * @param restrictions    16-char hex (callerHash4 + calleeHash4, 8 bytes)
+   * @param tokenAttributes binary hex from encodeCallAttributes()
+   * @param recipientAddress callee (CALL) or caller (ANS) BSV address
+   * @param feePerKb        sat/KB fee rate (default 1.1 — ephemeral signals)
+   */
+  async createCallSignalTx(
+    tokenName: string,
+    restrictions: string,
+    tokenAttributes: string,
+    recipientAddress: string,
+    feePerKb: number = 1.1,
+  ): Promise<{ txId: string }> {
+    const utxos = await this.getSafeUtxos()
+    if (utxos.length === 0) {
+      throw new Error('No spendable UTXOs. Fund your wallet address first.')
+    }
+
+    const opReturnScript = encodeOpReturn({
+      tokenName,
+      tokenScript: '',
+      tokenRules: restrictions,
+      tokenAttributes,
+      stateData: '',
+    })
+
+    const opReturnBytes = opReturnScript.toBinary()
+    const opReturnVarInt = opReturnBytes.length < 0xfd ? 1 : 3
+    const opReturnOutputSize = 8 + opReturnVarInt + opReturnBytes.length
+    const estSize = TX_OVERHEAD + BYTES_PER_INPUT + opReturnOutputSize + 2 * BYTES_PER_P2PKH_OUTPUT
+    const fee = Math.ceil(estSize * feePerKb / 1000)
+
+    const sorted = [...utxos].sort((a, b) => a.satoshis - b.satoshis)
+    const utxo = sorted.find(u => u.satoshis >= TOKEN_SATS + fee)
+    if (!utxo) {
+      const best = sorted[sorted.length - 1]
+      throw new Error(
+        `Insufficient funds: need ${TOKEN_SATS + fee} sats, best UTXO has ${best?.satoshis ?? 0} sats.`
+      )
+    }
+
+    const sourceTx = await this.provider.getSourceTransaction(utxo.txId)
+    const tx = new Transaction()
+    tx.addInput({
+      sourceTransaction: sourceTx,
+      sourceOutputIndex: utxo.outputIndex,
+      unlockingScriptTemplate: new P2PKH().unlock(this.key),
+    })
+    tx.addOutput({ lockingScript: opReturnScript, satoshis: 0 })
+    tx.addOutput({ lockingScript: new P2PKH().lock(recipientAddress), satoshis: TOKEN_SATS })
+
+    const changeAmount = utxo.satoshis - TOKEN_SATS - fee
+    tx.addOutput({ lockingScript: new P2PKH().lock(this.myAddress), satoshis: changeAmount })
+
+    await tx.sign()
+    const txId = tx.id('hex') as string
+    await this.provider.broadcast(tx.toHex())
+
+    this.provider.registerPendingTx(
+      txId,
+      [{ txId: utxo.txId, outputIndex: utxo.outputIndex }],
+      changeAmount > 0 ? { outputIndex: 2, satoshis: changeAmount } : undefined,
+    )
+
+    return { txId }
+  }
+
   // ── Transaction Building (wallet internals) ───────────────────
 
   private async buildFundedTx(

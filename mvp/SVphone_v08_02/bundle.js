@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 06:26 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 06:26 UTC';});console.log('[SVphone] Build: 2026-03-05 06:26 UTC');
+window.SVPHONE_BUILD="2026-03-05 08:47 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 08:47 UTC';});console.log('[SVphone] Build: 2026-03-05 08:47 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -2788,30 +2788,6 @@ window.SVPHONE_BUILD="2026-03-05 06:26 UTC";document.addEventListener('DOMConten
     }
   };
 
-  // node_modules/@bsv/sdk/dist/esm/src/primitives/utils.js
-  var utils_exports = {};
-  __export(utils_exports, {
-    Reader: () => Reader,
-    ReaderUint8Array: () => ReaderUint8Array,
-    Writer: () => Writer,
-    WriterUint8Array: () => WriterUint8Array,
-    base64ToArray: () => base64ToArray,
-    constantTimeEquals: () => constantTimeEquals,
-    encode: () => encode,
-    fromBase58: () => fromBase58,
-    fromBase58Check: () => fromBase58Check,
-    minimallyEncode: () => minimallyEncode,
-    toArray: () => toArray2,
-    toBase58: () => toBase58,
-    toBase58Check: () => toBase58Check,
-    toBase64: () => toBase64,
-    toHex: () => toHex,
-    toUTF8: () => toUTF8,
-    toUint8Array: () => toUint8Array,
-    verifyNotNull: () => verifyNotNull,
-    zero2: () => zero2
-  });
-
   // node_modules/@bsv/sdk/dist/esm/src/primitives/Hash.js
   var Hash_exports = {};
   __export(Hash_exports, {
@@ -4905,13 +4881,6 @@ window.SVPHONE_BUILD="2026-03-05 06:26 UTC";document.addEventListener('DOMConten
   // node_modules/@bsv/sdk/dist/esm/src/primitives/utils.js
   var BufferCtor2 = typeof globalThis !== "undefined" ? globalThis.Buffer : void 0;
   var CAN_USE_BUFFER2 = BufferCtor2 != null && typeof BufferCtor2.from === "function";
-  var zero2 = (word) => {
-    if (word.length % 2 === 1) {
-      return "0" + word;
-    } else {
-      return word;
-    }
-  };
   var HEX_DIGITS = "0123456789abcdef";
   var HEX_BYTE_STRINGS = new Array(256);
   for (let i = 0; i < 256; i++) {
@@ -5609,15 +5578,6 @@ window.SVPHONE_BUILD="2026-03-05 06:26 UTC";document.addEventListener('DOMConten
     if (value == null)
       throw new Error(errorMessage);
     return value;
-  }
-  function constantTimeEquals(a, b) {
-    if (a.length !== b.length)
-      return false;
-    let diff = 0;
-    for (let i = 0; i < a.length; i++) {
-      diff |= a[i] ^ b[i];
-    }
-    return diff === 0;
   }
 
   // node_modules/@bsv/sdk/dist/esm/src/primitives/Point.js
@@ -16732,6 +16692,68 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
         return this.provider.getBlockHeader(height);
       });
     }
+    // ── Call Signal TX ────────────────────────────────────────────
+    /**
+     * Build and broadcast a single-TX call signal using the P OP_RETURN format.
+     * No genesis+transfer; the signal goes directly to recipientAddress in one TX.
+     *
+     * TX structure:
+     *   Output 0: OP_RETURN (0 sats) — P v03 format with call/answer data
+     *   Output 1: P2PKH 1-sat → recipientAddress (WoC address history indexing)
+     *   Output 2: P2PKH change → caller
+     *
+     * @param tokenName       "CALL-{ident}" or "ANS-{ident}"
+     * @param restrictions    16-char hex (callerHash4 + calleeHash4, 8 bytes)
+     * @param tokenAttributes binary hex from encodeCallAttributes()
+     * @param recipientAddress callee (CALL) or caller (ANS) BSV address
+     * @param feePerKb        sat/KB fee rate (default 1.1 — ephemeral signals)
+     */
+    async createCallSignalTx(tokenName, restrictions, tokenAttributes, recipientAddress, feePerKb = 1.1) {
+      const utxos = await this.getSafeUtxos();
+      if (utxos.length === 0) {
+        throw new Error("No spendable UTXOs. Fund your wallet address first.");
+      }
+      const opReturnScript = encodeOpReturn({
+        tokenName,
+        tokenScript: "",
+        tokenRules: restrictions,
+        tokenAttributes,
+        stateData: ""
+      });
+      const opReturnBytes = opReturnScript.toBinary();
+      const opReturnVarInt = opReturnBytes.length < 253 ? 1 : 3;
+      const opReturnOutputSize = 8 + opReturnVarInt + opReturnBytes.length;
+      const estSize = TX_OVERHEAD + BYTES_PER_INPUT + opReturnOutputSize + 2 * BYTES_PER_P2PKH_OUTPUT;
+      const fee = Math.ceil(estSize * feePerKb / 1e3);
+      const sorted = [...utxos].sort((a, b) => a.satoshis - b.satoshis);
+      const utxo = sorted.find((u) => u.satoshis >= TOKEN_SATS + fee);
+      if (!utxo) {
+        const best = sorted[sorted.length - 1];
+        throw new Error(
+          `Insufficient funds: need ${TOKEN_SATS + fee} sats, best UTXO has ${best?.satoshis ?? 0} sats.`
+        );
+      }
+      const sourceTx = await this.provider.getSourceTransaction(utxo.txId);
+      const tx = new Transaction();
+      tx.addInput({
+        sourceTransaction: sourceTx,
+        sourceOutputIndex: utxo.outputIndex,
+        unlockingScriptTemplate: new P2PKH().unlock(this.key)
+      });
+      tx.addOutput({ lockingScript: opReturnScript, satoshis: 0 });
+      tx.addOutput({ lockingScript: new P2PKH().lock(recipientAddress), satoshis: TOKEN_SATS });
+      const changeAmount = utxo.satoshis - TOKEN_SATS - fee;
+      tx.addOutput({ lockingScript: new P2PKH().lock(this.myAddress), satoshis: changeAmount });
+      await tx.sign();
+      const txId = tx.id("hex");
+      await this.provider.broadcast(tx.toHex());
+      this.provider.registerPendingTx(
+        txId,
+        [{ txId: utxo.txId, outputIndex: utxo.outputIndex }],
+        changeAmount > 0 ? { outputIndex: 2, satoshis: changeAmount } : void 0
+      );
+      return { txId };
+    }
     // ── Transaction Building (wallet internals) ───────────────────
     async buildFundedTx(utxos, changeAddress, addOutputs) {
       const sorted = [...utxos].sort((a, b) => a.satoshis - b.satoshis);
@@ -17274,175 +17296,6 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     }
   };
 
-  // src/sv_connect/inscription_builder.ts
-  var CONTENT_TYPE_JSON = "application/json";
-  var ORD_MARKER = [111, 114, 100];
-  var SVPHONE_PROTO = "svphone";
-  var TX_OVERHEAD2 = 10;
-  var BYTES_PER_INPUT2 = 148;
-  var BYTES_PER_P2PKH_OUTPUT2 = 34;
-  var FEE_PER_KB = 100;
-  var InscriptionBuilder = class {
-    // ── Script Building ───────────────────────────────────────────────
-    /**
-     * Build a 1sat ordinal inscription locking script.
-     * Combines the OP_FALSE OP_IF inscription envelope with a P2PKH lock.
-     */
-    buildInscriptionLockingScript(jsonData, recipientAddress) {
-      const contentTypeBytes = Array.from(new TextEncoder().encode(CONTENT_TYPE_JSON));
-      const dataBytes = Array.from(new TextEncoder().encode(jsonData));
-      const chunks = [
-        { op: OP_default.OP_FALSE },
-        { op: OP_default.OP_IF },
-        this.pushChunk(ORD_MARKER),
-        { op: OP_default.OP_1 },
-        this.pushChunk(contentTypeBytes),
-        { op: OP_default.OP_0 },
-        this.pushChunk(dataBytes),
-        { op: OP_default.OP_ENDIF },
-        ...new P2PKH().lock(recipientAddress).chunks
-      ];
-      return new LockingScript(chunks);
-    }
-    /** Create a minimally-encoded PUSHDATA chunk for the given bytes */
-    pushChunk(data) {
-      if (data.length <= 75) return { op: data.length, data };
-      if (data.length <= 255) return { op: OP_default.OP_PUSHDATA1, data };
-      if (data.length <= 65535) return { op: OP_default.OP_PUSHDATA2, data };
-      return { op: 78, data };
-    }
-    // ── Transaction Building ──────────────────────────────────────────
-    /**
-     * Build, sign, and broadcast a 1-sat inscription to recipientAddress.
-     * Uses walletProvider for UTXOs and broadcast (same pattern as tokenBuilder.ts).
-     * Excludes 1-sat UTXOs from funding (they may hold tokens/ordinals).
-     */
-    async buildAndBroadcast(callData, recipientAddress, provider2, key, feePerKb = FEE_PER_KB) {
-      const jsonData = JSON.stringify(callData);
-      const myAddress = key.toAddress();
-      const allUtxos = await provider2.getUtxos();
-      const safeUtxos = allUtxos.filter((u) => u.satoshis > 1);
-      if (safeUtxos.length === 0) {
-        throw new Error("No spendable UTXOs. Fund your wallet first (need > 1 sat UTXOs).");
-      }
-      const inscriptionScript = this.buildInscriptionLockingScript(jsonData, recipientAddress);
-      const inscriptionScriptBytes = inscriptionScript.toBinary();
-      const inscVarInt = inscriptionScriptBytes.length < 253 ? 1 : 3;
-      const inscOutputSize = 8 + inscVarInt + inscriptionScriptBytes.length;
-      const estimatedSize = TX_OVERHEAD2 + BYTES_PER_INPUT2 + inscOutputSize + 2 * BYTES_PER_P2PKH_OUTPUT2;
-      const fee = Math.ceil(estimatedSize * feePerKb / 1e3);
-      const sorted = [...safeUtxos].sort((a, b) => a.satoshis - b.satoshis);
-      const utxo = sorted.find((u) => u.satoshis >= 2 + fee);
-      if (!utxo) {
-        const best = sorted[sorted.length - 1];
-        throw new Error(
-          `Insufficient funds: need ${1 + fee} sats, best UTXO has ${best?.satoshis ?? 0} sats.`
-        );
-      }
-      const sourceTx = await provider2.getSourceTransaction(utxo.txId);
-      const tx = new Transaction();
-      tx.addInput({
-        sourceTransaction: sourceTx,
-        sourceOutputIndex: utxo.outputIndex,
-        unlockingScriptTemplate: new P2PKH().unlock(key)
-      });
-      tx.addOutput({
-        lockingScript: inscriptionScript,
-        satoshis: 1
-      });
-      tx.addOutput({
-        lockingScript: new P2PKH().lock(recipientAddress),
-        satoshis: 1
-      });
-      const changeAmount = utxo.satoshis - 2 - fee;
-      tx.addOutput({
-        lockingScript: new P2PKH().lock(myAddress),
-        satoshis: changeAmount
-      });
-      await tx.sign();
-      const txId = tx.id("hex");
-      await provider2.broadcast(tx.toHex());
-      provider2.registerPendingTx(
-        txId,
-        [{ txId: utxo.txId, outputIndex: utxo.outputIndex }],
-        changeAmount > 0 ? { outputIndex: 2, satoshis: changeAmount } : void 0
-      );
-      return { txId };
-    }
-    // ── Inscription Parsing ───────────────────────────────────────────
-    /**
-     * Parse a 1sat ordinal inscription from a locking script hex string.
-     * Returns the parsed SVphone call data object, or null if not a valid inscription.
-     */
-    parseInscription(scriptHex) {
-      const bytes2 = utils_exports.toArray(scriptHex, "hex");
-      for (let i = 0; i < bytes2.length - 10; i++) {
-        if (bytes2[i] === OP_default.OP_FALSE && bytes2[i + 1] === OP_default.OP_IF && bytes2[i + 2] === 3 && // PUSH 3 bytes
-        bytes2[i + 3] === 111 && // 'o'
-        bytes2[i + 4] === 114 && // 'r'
-        bytes2[i + 5] === 100) {
-          let pos = i + 6;
-          if (bytes2[pos] !== OP_default.OP_1) continue;
-          pos++;
-          const [ctBytes, pos2] = this.readPush(bytes2, pos);
-          if (!ctBytes) continue;
-          pos = pos2;
-          if (bytes2[pos] !== OP_default.OP_0) continue;
-          pos++;
-          const [bodyBytes, _pos3] = this.readPush(bytes2, pos);
-          if (!bodyBytes) continue;
-          const contentType = new TextDecoder().decode(new Uint8Array(ctBytes));
-          if (contentType !== CONTENT_TYPE_JSON) continue;
-          try {
-            const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(bodyBytes)));
-            if (parsed?.proto === SVPHONE_PROTO) {
-              return parsed;
-            }
-          } catch {
-          }
-        }
-      }
-      return null;
-    }
-    /** Read a PUSHDATA chunk at pos, return [bytes, newPos] */
-    readPush(bytes2, pos) {
-      if (pos >= bytes2.length) return [null, pos];
-      const op = bytes2[pos];
-      if (op >= 1 && op <= 75) {
-        return [Array.from(bytes2.slice(pos + 1, pos + 1 + op)), pos + 1 + op];
-      }
-      if (op === OP_default.OP_PUSHDATA1) {
-        const len = bytes2[pos + 1];
-        return [Array.from(bytes2.slice(pos + 2, pos + 2 + len)), pos + 2 + len];
-      }
-      if (op === OP_default.OP_PUSHDATA2) {
-        const len = bytes2[pos + 1] | bytes2[pos + 2] << 8;
-        return [Array.from(bytes2.slice(pos + 3, pos + 3 + len)), pos + 3 + len];
-      }
-      if (op === 78) {
-        const len = bytes2[pos + 1] | bytes2[pos + 2] << 8 | bytes2[pos + 3] << 16 | bytes2[pos + 4] << 24;
-        return [Array.from(bytes2.slice(pos + 5, pos + 5 + len)), pos + 5 + len];
-      }
-      return [null, pos];
-    }
-    /**
-     * Scan a Transaction for a SVphone call inscription addressed to myAddress.
-     * Returns the call data object if found, or null.
-     */
-    scanTxForCallInscription(tx, myAddress) {
-      for (const output of tx.outputs) {
-        const scriptHex = output.lockingScript?.toHex() ?? "";
-        if (!scriptHex) continue;
-        const inscription = this.parseInscription(scriptHex);
-        if (!inscription) continue;
-        const type = inscription.type;
-        if (type === "call" && inscription.callee === myAddress) return inscription;
-        if (type === "answer" && inscription.caller === myAddress) return inscription;
-      }
-      return null;
-    }
-  };
-
   // src/app.ts
   var provider;
   var builder;
@@ -17472,16 +17325,16 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     store = new TokenStore(storage);
     fileCache = new FileCache();
     builder = new TokenBuilder(provider, store, key);
-    console.log("[SVphone v06.12] Initialized");
-    console.log("[SVphone v06.12] Address:", address);
-    console.log("[SVphone v06.12] TokenBuilder available:", !!builder);
+    console.log("[SVphone v08.02] Initialized");
+    console.log("[SVphone v08.02] Address:", address);
+    console.log("[SVphone v08.02] TokenBuilder available:", !!builder);
   }
   window.TokenBuilder = TokenBuilder;
   window.TokenStore = TokenStore;
   window.WalletProvider = WalletProvider;
   window.initWallet = init;
   window.decodeTokenRules = decodeTokenRules;
-  window.InscriptionBuilder = InscriptionBuilder;
+  window.decodeOpReturn = decodeOpReturn;
   window.bitcoin = {
     PrivateKey,
     Hash: Hash_exports
@@ -17494,7 +17347,6 @@ ${t.inputTxids.map((it) => `      '${it}'`).join(",\n")}
     window.tokenStore = store;
     window.provider = provider;
     window.fileCache = fileCache;
-    window.inscriptionBuilder = new InscriptionBuilder();
     window.myKey = myKey ?? void 0;
     if (myKey) {
       window.myAddress = myKey.toAddress();
@@ -21349,25 +21201,33 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 /**
- * Call Token Manager (v08.00) - 1-sat Ordinal Inscription Implementation
+ * Call Token Manager (v08.02) - OP_RETURN Binary Format Implementation
  *
- * Replaces the PPV (genesis + 10-min confirmation + transfer) flow with a single
- * 1-sat ordinal inscription sent directly to the callee. All WebRTC call data
- * (IP, port, SDP, codec, session key) is inscribed in the standard 1sat ordinal
- * envelope as JSON.
+ * Uses the compact v07_00 binary format via P OP_RETURN in a single TX.
+ * No genesis+transfer ceremony: signal goes directly from caller to callee.
  *
- * Flow:
- *   Caller: buildAndBroadcast(callData, calleeAddress) → 1-sat inscription in mempool (~instant)
- *   Callee: polls address history → scans TXs → finds inscription → call:incoming
- *   Callee: buildAndBroadcast(answerData, callerAddress) → answer inscription in mempool
- *   Caller: polls → finds answer inscription → call:answered → WebRTC connect
+ * TX structure:
+ *   Output 0: OP_RETURN (0 sats) — P v03 format
+ *   Output 1: P2PKH 1-sat → callee (WoC address history indexing)
+ *   Output 2: P2PKH change → caller
+ *
+ * Binary tokenAttributes format (v07_00 compatible):
+ *   [1]     version = 0x01
+ *   [4|16]  IP (MSB of first byte = IPv6 flag)
+ *   [2]     port (big-endian)
+ *   [1+N]   session key (1-byte length + N bytes)
+ *   [1]     codec: 0=opus, 1=pcm, 2=aac
+ *   [1]     quality: 0=sd, 1=hd, 2=vhd
+ *   [1]     media bitmask: bit0=audio, bit1=video
+ *   [2+N]   SDP (2-byte length + N bytes)
+ *   [1+N]   caller address (1-byte length + N bytes UTF-8)
+ *   [1+N]   callee address (1-byte length + N bytes UTF-8)
  */
 
-const PROTO_VERSION = 1
-const PROTO_NAME = 'svphone'
-const DEFAULT_CODEC = 'opus'
-const DEFAULT_QUALITY = 'hd'
-const DEFAULT_MEDIA = ['audio']
+const CODECS = { opus: 0, pcm: 1, aac: 2 }
+const CODEC_IDS = ['opus', 'pcm', 'aac']
+const QUALITIES = { sd: 0, hd: 1, vhd: 2 }
+const QUALITY_IDS = ['sd', 'hd', 'vhd']
 
 class CallTokenManager {
   constructor(uiLogger) {
@@ -21375,86 +21235,276 @@ class CallTokenManager {
   }
 
   /**
-   * Create and broadcast a call inscription to the callee.
+   * Encode call attributes into binary format (~45 bytes overhead + SDP + addresses).
+   * @param {Object} callToken - {senderIp, senderPort, sessionKey, codec, quality, mediaTypes, sdpOffer|sdpAnswer, caller, callee}
+   * @returns {string} Hex-encoded binary
+   */
+  encodeCallAttributes(callToken) {
+    try {
+      const bytes = []
+
+      // Version marker (0x01 = binary format v1)
+      bytes.push(0x01)
+
+      // IP address and port
+      const ip = callToken.senderIp
+      const port = callToken.senderPort
+      const isIPv6 = ip.includes(':')
+      const ipBits = isIPv6 ? 1 : 0
+
+      if (!isIPv6) {
+        const parts = ip.split('.').map(p => parseInt(p, 10))
+        bytes.push((ipBits << 7) | (parts[0] & 0x7F))
+        bytes.push(parts[1])
+        bytes.push(parts[2])
+        bytes.push(parts[3])
+      } else {
+        const ipv6Buf = this._ipv6ToBytes(ip)
+        bytes.push((ipBits << 7) | (ipv6Buf[0] & 0x7F))
+        bytes.push(...ipv6Buf.slice(1))
+      }
+
+      // Port (2 bytes, big-endian)
+      bytes.push((port >> 8) & 0xFF)
+      bytes.push(port & 0xFF)
+
+      // Session key (1-byte length prefix + N bytes)
+      const keyData = callToken.sessionKey
+      const keyBuf = typeof keyData === 'string'
+        ? new TextEncoder().encode(keyData)
+        : keyData
+      bytes.push(keyBuf.length)
+      bytes.push(...keyBuf)
+
+      // Codec (1 byte enum)
+      bytes.push(CODECS[callToken.codec] ?? 0)
+
+      // Quality (1 byte enum)
+      bytes.push(QUALITIES[callToken.quality] ?? 1)
+
+      // Media types (1 byte bitmask: bit0=audio, bit1=video)
+      let mediaBitmask = 0
+      if (callToken.mediaTypes?.includes('audio')) mediaBitmask |= 0x01
+      if (callToken.mediaTypes?.includes('video')) mediaBitmask |= 0x02
+      bytes.push(mediaBitmask)
+
+      // SDP offer or answer (2-byte length prefix + N bytes)
+      const sdpData = callToken.sdpOffer || callToken.sdpAnswer || ''
+      const sdpBuf = new TextEncoder().encode(sdpData)
+      bytes.push((sdpBuf.length >> 8) & 0xFF)
+      bytes.push(sdpBuf.length & 0xFF)
+      bytes.push(...sdpBuf)
+
+      // Caller address (1-byte length prefix + N bytes UTF-8)
+      const callerBuf = new TextEncoder().encode(callToken.caller || '')
+      bytes.push(callerBuf.length)
+      bytes.push(...callerBuf)
+
+      // Callee address (1-byte length prefix + N bytes UTF-8)
+      const calleeBuf = new TextEncoder().encode(callToken.callee || '')
+      bytes.push(calleeBuf.length)
+      bytes.push(...calleeBuf)
+
+      return bytes.map(b => ('0' + b.toString(16)).slice(-2)).join('')
+    } catch (error) {
+      console.error('[CallToken] Failed to encode attributes:', error)
+      return '00'
+    }
+  }
+
+  /**
+   * Decode call attributes from binary hex string.
+   * @param {string} hexStr - Hex-encoded binary tokenAttributes
+   * @returns {Object} {senderIp, senderPort, sessionKey, codec, quality, mediaTypes, sdpOffer, caller, callee}
+   */
+  decodeCallAttributes(hexStr) {
+    if (!hexStr || hexStr === '00') return null
+    try {
+      const bytes = []
+      for (let i = 0; i < hexStr.length; i += 2) {
+        bytes.push(parseInt(hexStr.substring(i, i + 2), 16))
+      }
+      if (bytes.length < 10) return null
+
+      let offset = 1 // Skip version byte
+
+      // IP address
+      const ipTypeByte = bytes[offset++]
+      const isIPv6 = (ipTypeByte >> 7) & 1
+      const firstByte = ipTypeByte & 0x7F
+      let senderIp
+      if (!isIPv6) {
+        senderIp = `${firstByte}.${bytes[offset]}.${bytes[offset + 1]}.${bytes[offset + 2]}`
+        offset += 3
+      } else {
+        const ipBytes = [firstByte, ...bytes.slice(offset, offset + 15)]
+        senderIp = this._bytesToIPv6(ipBytes)
+        offset += 15
+      }
+
+      // Port
+      const senderPort = (bytes[offset] << 8) | bytes[offset + 1]
+      offset += 2
+
+      // Session key
+      const keyLen = bytes[offset++]
+      const keyBuf = bytes.slice(offset, offset + keyLen)
+      const sessionKey = new TextDecoder().decode(new Uint8Array(keyBuf))
+      offset += keyLen
+
+      // Codec and Quality
+      const codec = CODEC_IDS[bytes[offset++]] || 'opus'
+      const quality = QUALITY_IDS[bytes[offset++]] || 'hd'
+
+      // Media types
+      const mediaBitmask = bytes[offset++]
+      const mediaTypes = []
+      if (mediaBitmask & 0x01) mediaTypes.push('audio')
+      if (mediaBitmask & 0x02) mediaTypes.push('video')
+
+      // SDP
+      const sdpLen = (bytes[offset] << 8) | bytes[offset + 1]
+      offset += 2
+      const sdpBuf = bytes.slice(offset, offset + sdpLen)
+      const sdpOffer = new TextDecoder().decode(new Uint8Array(sdpBuf))
+      offset += sdpLen
+
+      // Caller address
+      let caller = ''
+      if (offset < bytes.length) {
+        const callerLen = bytes[offset++]
+        const callerBuf = bytes.slice(offset, offset + callerLen)
+        caller = new TextDecoder().decode(new Uint8Array(callerBuf))
+        offset += callerLen
+      }
+
+      // Callee address
+      let callee = ''
+      if (offset < bytes.length) {
+        const calleeLen = bytes[offset++]
+        const calleeBuf = bytes.slice(offset, offset + calleeLen)
+        callee = new TextDecoder().decode(new Uint8Array(calleeBuf))
+        offset += calleeLen
+      }
+
+      return { senderIp, senderPort, sessionKey, codec, quality, mediaTypes, sdpOffer, caller, callee }
+    } catch (error) {
+      console.error('[CallToken] Failed to decode attributes:', error)
+      return null
+    }
+  }
+
+  /**
+   * Compute 32-bit truncated SHA256 hash of an address (returns 8 hex chars = 4 bytes).
+   * @param {string} address - BSV address
+   * @returns {Promise<string>} 8-character hex string
+   */
+  async hashAddress(address) {
+    try {
+      const data = new TextEncoder().encode(address)
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+      const hashArray = Array.from(new Uint8Array(hashBuffer))
+      return hashArray.map(b => ('0' + b.toString(16)).slice(-2)).join('').substring(0, 8)
+    } catch (error) {
+      console.error('[CallToken] Failed to hash address:', error)
+      return '00000000'
+    }
+  }
+
+  /** @private Convert IPv6 string to 16-byte array */
+  _ipv6ToBytes(ip) {
+    const parts = ip.split(':').filter(p => p.length > 0)
+    const bytes = new Uint8Array(16)
+    let byteIndex = 0
+    for (let i = 0; i < parts.length && byteIndex < 16; i++) {
+      const val = parseInt(parts[i], 16) || 0
+      bytes[byteIndex++] = (val >> 8) & 0xFF
+      bytes[byteIndex++] = val & 0xFF
+    }
+    return Array.from(bytes)
+  }
+
+  /** @private Convert 16-byte array to IPv6 string */
+  _bytesToIPv6(bytes) {
+    const parts = []
+    for (let i = 0; i < 16; i += 2) {
+      parts.push(((bytes[i] << 8) | bytes[i + 1]).toString(16))
+    }
+    return parts.join(':')
+  }
+
+  /**
+   * Create and broadcast a CALL signal to the callee.
+   * Single TX: OP_RETURN (call data) + 1-sat to callee + change.
    * @param {Object} callToken - {caller, callee, senderIp, senderPort, sessionKey, codec, quality, mediaTypes, sdpOffer}
    * @returns {Promise<{txId: string}>}
    */
   async createAndBroadcastCallToken(callToken) {
-    this.log(`Sending call inscription to ${callToken.callee}`, 'info')
-
-    const callData = {
-      v: PROTO_VERSION,
-      proto: PROTO_NAME,
-      type: 'call',
-      caller: callToken.caller,
-      callee: callToken.callee,
-      ip: callToken.senderIp,
-      port: callToken.senderPort,
-      key: callToken.sessionKey,
-      codec: callToken.codec ?? DEFAULT_CODEC,
-      quality: callToken.quality ?? DEFAULT_QUALITY,
-      media: callToken.mediaTypes ?? DEFAULT_MEDIA,
-      sdp: callToken.sdpOffer ?? '',
-    }
-
+    this.log(`Sending call signal to ${callToken.callee}`, 'info')
     try {
-      const result = await window.inscriptionBuilder.buildAndBroadcast(
-        callData,
+      const callerHash = await this.hashAddress(callToken.caller)
+      const calleeHash = await this.hashAddress(callToken.callee)
+      const attrs = this.encodeCallAttributes(callToken)
+      const callerIdent = callToken.caller?.slice(0, 5) || 'unkn'
+
+      const result = await window.tokenBuilder.createCallSignalTx(
+        `CALL-${callerIdent}`,
+        callerHash + calleeHash,
+        attrs,
         callToken.callee,
-        window.provider,
-        window.myKey,
-        1.1,  // call inscriptions are ephemeral — minimum viable fee rate
       )
 
-      this.log(`✓ Call inscription sent: ${result.txId}`, 'success')
+      this.log(`✓ Call signal sent: ${result.txId}`, 'success')
       this.log(`https://whatsonchain.com/tx/${result.txId}`, 'info')
 
       return { txId: result.txId, tokenId: result.txId }
     } catch (err) {
-      this.log(`Call inscription failed: ${err.message}`, 'error')
+      this.log(`Call signal failed: ${err.message}`, 'error')
       throw err
     }
   }
 
   /**
-   * Broadcast an answer inscription back to the caller.
+   * Broadcast an ANS signal back to the caller.
+   * Single TX: OP_RETURN (answer data) + 1-sat to caller + change.
    * @param {string} callerAddress - Caller's BSV address
-   * @param {Object} answerData - {sdpAnswer, senderIp, senderPort, sessionKey, codec, quality, mediaTypes, caller, callee}
+   * @param {Object} answerData - {sdpAnswer, senderIp, senderPort, sessionKey, codec, quality, mediaTypes, callee}
    * @returns {Promise<{txId: string}>}
    */
   async broadcastCallAnswer(callerAddress, answerData) {
-    this.log(`Sending answer inscription to ${callerAddress}`, 'info')
-
-    const answerPayload = {
-      v: PROTO_VERSION,
-      proto: PROTO_NAME,
-      type: 'answer',
-      caller: answerData.caller,
-      callee: answerData.callee,
-      ip: answerData.senderIp,
-      port: answerData.senderPort,
-      key: answerData.sessionKey,
-      codec: answerData.codec ?? DEFAULT_CODEC,
-      quality: answerData.quality ?? DEFAULT_QUALITY,
-      media: answerData.mediaTypes ?? DEFAULT_MEDIA,
-      sdp: answerData.sdpAnswer ?? '',
-    }
-
+    this.log(`Sending answer signal to ${callerAddress}`, 'info')
     try {
-      const result = await window.inscriptionBuilder.buildAndBroadcast(
-        answerPayload,
+      const calleeAddr = answerData.callee || window.myAddress || ''
+      const callerHash = await this.hashAddress(callerAddress)
+      const calleeHash = await this.hashAddress(calleeAddr)
+      const calleeIdent = calleeAddr.slice(0, 5) || 'unkn'
+
+      const answerToken = {
+        senderIp: answerData.senderIp,
+        senderPort: answerData.senderPort,
+        sessionKey: answerData.sessionKey,
+        codec: answerData.codec,
+        quality: answerData.quality,
+        mediaTypes: answerData.mediaTypes,
+        sdpAnswer: answerData.sdpAnswer,
+        caller: callerAddress,
+        callee: calleeAddr,
+      }
+      const attrs = this.encodeCallAttributes(answerToken)
+
+      const result = await window.tokenBuilder.createCallSignalTx(
+        `ANS-${calleeIdent}`,
+        callerHash + calleeHash,
+        attrs,
         callerAddress,
-        window.provider,
-        window.myKey,
-        1.1,  // answer inscriptions are ephemeral — minimum viable fee rate
       )
 
-      this.log(`✓ Answer inscription sent: ${result.txId}`, 'success')
+      this.log(`✓ Answer signal sent: ${result.txId}`, 'success')
       this.log(`https://whatsonchain.com/tx/${result.txId}`, 'info')
 
       return { txId: result.txId }
     } catch (err) {
-      this.log(`Answer inscription failed: ${err.message}`, 'error')
+      this.log(`Answer signal failed: ${err.message}`, 'error')
       throw err
     }
   }
@@ -22050,29 +22100,14 @@ class CallHandlers {
             if (myIp) this.app.signaling.myIp = myIp
             if (myPort) this.app.signaling.myPort = myPort
 
-            // broadcastAnswerFn: send answer inscription back to caller
+            // broadcastAnswerFn: send answer signal back to caller
             const broadcastAnswerFn = async (_callTokenId, callerAddress, answerData) => {
-                this.ui.log(`📤 Sending answer inscription to caller...`, 'info')
-                const answerCallData = {
-                    v: 1,
-                    proto: 'svphone',
-                    type: 'answer',
-                    caller: callerAddress,
+                this.ui.log(`📤 Sending answer signal to caller...`, 'info')
+                const answerWithCallee = {
+                    ...answerData,
                     callee: this.app.signaling.myAddress,
-                    ip: answerData.senderIp,
-                    port: answerData.senderPort,
-                    key: answerData.sessionKey,
-                    codec: answerData.codec,
-                    quality: answerData.quality,
-                    media: answerData.mediaTypes,
-                    sdp: answerData.sdpAnswer,
                 }
-                const result = await window.inscriptionBuilder.buildAndBroadcast(
-                    answerCallData,
-                    callerAddress,
-                    window.provider,
-                    window.myKey,
-                )
+                const result = await this.app.callTokenManager.broadcastCallAnswer(callerAddress, answerWithCallee)
                 this.ui.log(`✓ Answer sent: ${result.txId}`, 'success')
                 return result
             }
@@ -22788,11 +22823,11 @@ class PhoneController {
      * Start background polling for incoming calls
      */
     async startBackgroundPolling() {
-        // Start listening for incoming call inscriptions in background
-        // This runs continuously so recipient can receive calls anytime
+        // Start listening for incoming call signals in background.
+        // This runs continuously so recipient can receive calls anytime.
         const myAddress = document.getElementById('myAddress')?.value
 
-        if (!window.inscriptionBuilder || !window.provider || !myAddress) {
+        if (!window.tokenBuilder || !window.provider || !myAddress || !this.callTokenManager) {
             this.ui.log(`⏳ Waiting for wallet to load (will retry in 2s)...`, 'warning')
             setTimeout(() => this.startBackgroundPolling(), 2000)
             return
@@ -22807,18 +22842,18 @@ class PhoneController {
             const seenTxIds = new Set()
 
             // Pre-seed seenTxIds with the current address history so that TXs already
-            // on-chain when polling starts are ignored.  Only inscriptions that arrive
+            // on-chain when polling starts are ignored.  Only signals that arrive
             // AFTER this point (new calls/answers) will be processed.
             try {
                 const initialHistory = await window.provider.getAddressHistory()
                 for (const { txId } of initialHistory) seenTxIds.add(txId)
-                console.log(`[Poll] Pre-seeded ${seenTxIds.size} existing txIds — will only process new inscriptions`)
+                console.log(`[Poll] Pre-seeded ${seenTxIds.size} existing txIds — will only process new signals`)
             } catch (e) {
                 console.warn('[Poll] Could not pre-seed seenTxIds:', e.message)
             }
 
-            // Scan address history for SVphone call/answer inscriptions
-            const scanInscriptionsFn = async (address) => {
+            // Scan address history for SVphone call/answer OP_RETURN signals
+            const scanSignalsFn = async (address) => {
                 if (!address) return []
 
                 const history = await window.provider.getAddressHistory()
@@ -22831,15 +22866,46 @@ class PhoneController {
                     try {
                         const tx = await window.provider.getSourceTransaction(txId)
                         // Cap seenTxIds to prevent unbounded growth over long sessions
-                    if (seenTxIds.size > 500) {
-                        const oldest = seenTxIds.values().next().value
-                        seenTxIds.delete(oldest)
-                    }
-                    seenTxIds.add(txId) // Only mark seen after successful fetch
-                        const inscription = window.inscriptionBuilder.scanTxForCallInscription(tx, address)
-                        console.log(`[Poll] ${txId.slice(0,12)}… inscription=${inscription ? JSON.stringify(inscription).slice(0,80) : 'null'}`)
-                        if (inscription) {
-                            results.push({ txId, inscription })
+                        if (seenTxIds.size > 500) {
+                            const oldest = seenTxIds.values().next().value
+                            seenTxIds.delete(oldest)
+                        }
+                        seenTxIds.add(txId) // Only mark seen after successful fetch
+
+                        // Scan outputs for P OP_RETURN call signals
+                        let signal = null
+                        for (const output of tx.outputs) {
+                            if (!output.lockingScript) continue
+                            const decoded = window.decodeOpReturn(output.lockingScript)
+                            if (!decoded) continue
+                            const name = decoded.tokenName
+                            if (!name?.startsWith('CALL-') && !name?.startsWith('ANS-')) continue
+
+                            const attrs = this.callTokenManager.decodeCallAttributes(decoded.tokenAttributes)
+                            if (!attrs?.senderIp) continue
+
+                            const isCall = name.startsWith('CALL-') && attrs.callee === address
+                            const isAnswer = name.startsWith('ANS-') && attrs.caller === address
+                            if (!isCall && !isAnswer) continue
+
+                            signal = {
+                                type: isCall ? 'call' : 'answer',
+                                caller: attrs.caller,
+                                callee: attrs.callee,
+                                ip: attrs.senderIp,
+                                port: attrs.senderPort,
+                                key: attrs.sessionKey,
+                                codec: attrs.codec,
+                                quality: attrs.quality,
+                                media: attrs.mediaTypes,
+                                sdp: attrs.sdpOffer,
+                            }
+                            break
+                        }
+
+                        console.log(`[Poll] ${txId.slice(0,12)}… signal=${signal ? JSON.stringify(signal).slice(0,80) : 'null'}`)
+                        if (signal) {
+                            results.push({ txId, inscription: signal })
                         }
                     } catch (e) {
                         console.warn(`[Poll] fetch failed for ${txId.slice(0,12)}…:`, e.message)
@@ -22849,8 +22915,8 @@ class PhoneController {
                 return results
             }
 
-            // Start polling (5 second interval)
-            this.signaling.startPolling(scanInscriptionsFn)
+            // Start polling
+            this.signaling.startPolling(scanSignalsFn)
             this.ui.log('📞 Background polling for incoming calls started', 'success')
             // call:incoming and call:answered are forwarded by CallManager via
             // call:incoming-session and call:answered-session — handled in bindEvents()

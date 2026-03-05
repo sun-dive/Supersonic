@@ -1,5 +1,5 @@
 /**
- * SVphone v06.12 - Browser entry point
+ * SVphone v08.02 - Browser entry point
  *
  * Exports all core classes to window for use in HTML interfaces:
  * - TokenBuilder, TokenStore, WalletProvider (token protocol)
@@ -11,9 +11,8 @@ import { PrivateKey, Hash } from '@bsv/sdk'
 import { WalletProvider } from './token_protocol/walletProvider'
 import { TokenBuilder } from './token_protocol/tokenBuilder'
 import { TokenStore, LocalStorageBackend } from './token_protocol/tokenStore'
-import { decodeTokenRules } from './token_protocol/opReturnCodec'
+import { decodeTokenRules, decodeOpReturn } from './token_protocol/opReturnCodec'
 import { FileCache } from './fileCache'
-import { InscriptionBuilder } from './sv_connect/inscription_builder'
 
 // ─── Global instances for browser access ────────────────────────────
 
@@ -50,9 +49,9 @@ function init() {
   fileCache = new FileCache()
   builder = new TokenBuilder(provider, store, key)
 
-  console.log('[SVphone v06.12] Initialized')
-  console.log('[SVphone v06.12] Address:', address)
-  console.log('[SVphone v06.12] TokenBuilder available:', !!builder)
+  console.log('[SVphone v08.02] Initialized')
+  console.log('[SVphone v08.02] Address:', address)
+  console.log('[SVphone v08.02] TokenBuilder available:', !!builder)
 }
 
 // ─── Export to window for HTML access ────────────────────────────────
@@ -73,8 +72,7 @@ declare global {
     myWif?: string
     initWallet?: typeof init
     decodeTokenRules?: typeof decodeTokenRules
-    InscriptionBuilder: typeof InscriptionBuilder
-    inscriptionBuilder?: InscriptionBuilder
+    decodeOpReturn?: typeof decodeOpReturn
     myKey?: PrivateKey
     bitcoin?: {
       PrivateKey: typeof PrivateKey
@@ -88,7 +86,7 @@ window.TokenStore = TokenStore
 window.WalletProvider = WalletProvider
 window.initWallet = init
 window.decodeTokenRules = decodeTokenRules
-window.InscriptionBuilder = InscriptionBuilder
+window.decodeOpReturn = decodeOpReturn
 window.bitcoin = {
   PrivateKey,
   Hash,
@@ -104,7 +102,6 @@ function initAndExpose() {
   window.tokenStore = store  // Alias for phone_interface.html
   window.provider = provider
   window.fileCache = fileCache
-  window.inscriptionBuilder = new InscriptionBuilder()
   window.myKey = myKey ?? undefined
 
   // Expose wallet key details for UI display
