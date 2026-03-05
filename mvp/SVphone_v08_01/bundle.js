@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 00:05 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 00:05 UTC';});console.log('[SVphone] Build: 2026-03-05 00:05 UTC');
+window.SVPHONE_BUILD="2026-03-05 00:10 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 00:10 UTC';});console.log('[SVphone] Build: 2026-03-05 00:10 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -21627,12 +21627,14 @@ class PhoneUI {
         // Pre-fill callee field so user can call back after the call ends
         const calleeField = this.addressElements.calleeAddress
         if (calleeField && !calleeField.value) calleeField.value = caller
+        this.startRingtone()
     }
 
     /**
      * Reset call UI to idle state
      */
     resetCallUI() {
+        this.stopRingtone()
         this.statusElements.callStatus.style.display = 'none'
         this.buttonElements.acceptBtn.style.display = 'none'
         this.buttonElements.rejectBtn.style.display = 'none'
@@ -21670,6 +21672,40 @@ class PhoneUI {
             clearInterval(this.state.durationInterval)
             this.state.durationInterval = null
         }
+    }
+
+    /**
+     * Classic dual-tone ring (440Hz + 480Hz) using Web Audio API.
+     * Pattern: 2s on, 4s off — repeating until stopRingtone() is called.
+     */
+    startRingtone() {
+        if (this._ringtoneCtx) return
+        this._ringtoneCtx = new AudioContext()
+        this._ringtonePlaying = true
+        this._ringCycle()
+    }
+
+    _ringCycle() {
+        if (!this._ringtonePlaying) return
+        const ctx = this._ringtoneCtx
+        const gain = ctx.createGain()
+        gain.gain.value = 0.25
+        gain.connect(ctx.destination)
+        const now = ctx.currentTime
+        ;[440, 480].forEach(freq => {
+            const osc = ctx.createOscillator()
+            osc.frequency.value = freq
+            osc.connect(gain)
+            osc.start(now)
+            osc.stop(now + 2)
+        })
+        this._ringtoneTimer = setTimeout(() => this._ringCycle(), 6000)
+    }
+
+    stopRingtone() {
+        this._ringtonePlaying = false
+        if (this._ringtoneTimer) { clearTimeout(this._ringtoneTimer); this._ringtoneTimer = null }
+        if (this._ringtoneCtx) { this._ringtoneCtx.close(); this._ringtoneCtx = null }
     }
 
     /**
