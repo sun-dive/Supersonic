@@ -226,37 +226,27 @@ class CallManager extends EventEmitter {
       const callToken = this.signaling.getCallToken(callTokenId)
       if (callToken?.sdpOffer) {
         try {
-          const answer = await this.peerConnection.createAnswer(
+          // Use deferred ICE checking: gather local candidates immediately (so they appear in
+          // the ANS TX SDP) but do NOT start connectivity checks yet.  Checks are held until
+          // after the ANS TX is broadcast — giving the caller time to receive it and start their
+          // own ICE.  Without this, the callee's ICE fails in ~5s (before the caller starts),
+          // then the caller's ICE starts 15s later against a dead callee ICE agent.
+          const iceLog = (msg, type = 'info') => this.emit('call:log', { msg, type })
+          const { answer, callerCandidates } = await this.peerConnection.prepareAnswerDeferred(
             callToken.caller,
             callToken.sdpOffer.sdp
           )
           session.mediaAnswer = answer
-          console.debug('[CallManager] ✓ SDP answer created and stored in session')
+          console.debug('[CallManager] ✓ Deferred answer prepared, gathering candidates...')
 
-          // Inject caller's public IP as srflx candidates so ICE can traverse NAT
-          // without STUN — works on full-cone / address-restricted NAT (typical home broadband).
-          const iceLog = (msg, type = 'info') => this.emit('call:log', { msg, type })
-          iceLog(`[ICE] Caller ip4: ${callToken.senderIp4 ?? 'none'} ip6: ${callToken.senderIp6 ?? 'none'}`)
-          if (callToken.senderIp4 || callToken.senderIp6) {
-            const pubCandidates = this.peerConnection._buildPublicIpCandidates(
-              callToken.sdpOffer.sdp, callToken.senderIp4 ?? null, callToken.senderIp6 ?? null, iceLog
-            )
-            for (const c of pubCandidates) {
-              this.peerConnection.addIceCandidate(callToken.caller, c)
-                .catch(e => console.warn('[CallManager] Public IP candidate rejected:', e.message))
-            }
-          }
-
-          // **IMPORTANT: Broadcast answer token back to caller BEFORE connecting**
-          // This ensures the caller can retrieve the answer when accepting the call
+          // Broadcast ANS TX immediately after gathering (no 5s wait for STUN srflx we don't have)
           try {
-            // Wait for callee's ICE gathering so all candidates are in the answer SDP
             const finalAnswer = await this.peerConnection.waitForIceGathering(callToken.caller)
             const answerSdp = finalAnswer?.sdp || answer.sdp
-            console.debug('[CallManager] Broadcasting SDP answer to caller (ICE gathered)...')
+            console.debug('[CallManager] Broadcasting SDP answer to caller...')
             await this.signaling.broadcastCallAnswer(
               callTokenId,
-              callToken.caller,  // Send answer back to caller
+              callToken.caller,
               {
                 sdpAnswer: answerSdp,
                 senderIp: this.signaling.myIp,
@@ -268,9 +258,29 @@ class CallManager extends EventEmitter {
                 quality: callToken.quality,
                 mediaTypes: callToken.mediaTypes
               },
-              options.broadcastAnswerFn  // Optional function to broadcast (for testing)
+              options.broadcastAnswerFn
             )
-            console.debug('[CallManager] ✓ SDP answer broadcasted to caller')
+            console.debug('[CallManager] ✓ SDP answer broadcasted. Activating ICE in 12s...')
+            iceLog('[ICE] ANS sent. Starting ICE checks in 12s (waiting for caller to be ready)')
+
+            // After 12 seconds the caller should have received the ANS TX and started their
+            // ICE agent.  Now we activate checking on this side simultaneously.
+            setTimeout(() => {
+              iceLog(`[ICE] Activating deferred checks (caller ip4: ${callToken.senderIp4 ?? 'none'} ip6: ${callToken.senderIp6 ?? 'none'})`)
+              // Add caller's native candidates from the offer SDP
+              this.peerConnection.activateDeferredChecking(callToken.caller, callerCandidates)
+                .catch(e => console.warn('[CallManager] Deferred checking error:', e.message))
+              // Also inject synthetic srflx candidates based on caller's public IP
+              if (callToken.senderIp4 || callToken.senderIp6) {
+                const pubCandidates = this.peerConnection._buildPublicIpCandidates(
+                  callToken.sdpOffer.sdp, callToken.senderIp4 ?? null, callToken.senderIp6 ?? null, iceLog
+                )
+                for (const c of pubCandidates) {
+                  this.peerConnection.addIceCandidate(callToken.caller, c)
+                    .catch(e => console.warn('[CallManager] Public IP candidate rejected:', e.message))
+                }
+              }
+            }, 12000)
           } catch (error) {
             console.warn('[CallManager] Failed to broadcast media answer:', error)
           }

@@ -309,6 +309,82 @@ class PeerConnection extends EventEmitter {
   }
 
   /**
+   * Prepare an answer and gather local ICE candidates WITHOUT starting connectivity
+   * checks yet.  Checks are deferred until the caller explicitly calls
+   * activateDeferredChecking(peerId, callerCandidates).
+   *
+   * How it works:
+   *   setLocalDescription triggers gathering but NOT checking.
+   *   Checking only starts once the remote description has at least one candidate pair.
+   *   By stripping candidates from the offer before setRemoteDescription we get
+   *   gathering without checking — giving us a complete local SDP (with real ports)
+   *   to put in the ANS TX, while allowing checking to start later once the caller
+   *   is known to have received the ANS TX and started their own ICE.
+   *
+   * @param {string} peerId - Peer identifier (= caller address)
+   * @param {string} offerSdp - Full SDP from CALL TX (may have host/mDNS candidates)
+   * @returns {Promise<{answerSdp: string, callerCandidates: Array}>}
+   */
+  async prepareAnswerDeferred(peerId, offerSdp) {
+    try {
+      let peerConnection = this.peerConnections.get(peerId)
+      if (!peerConnection) {
+        peerConnection = this.createPeerConnection(peerId)
+      }
+
+      // Extract candidate lines so we can add them later (triggering ICE checking)
+      const callerCandidates = []
+      let mid = null, mIdx = -1
+      for (const line of offerSdp.split(/\r?\n/)) {
+        if (line.startsWith('m=')) { mIdx++; mid = null }
+        else if (line.startsWith('a=mid:')) mid = line.slice(6).trim()
+        else if (line.startsWith('a=candidate:')) {
+          callerCandidates.push({ candidate: line.slice(2), sdpMid: mid, sdpMLineIndex: mIdx })
+        }
+      }
+
+      // Remove candidate lines from offer — setLocalDescription won't trigger checking
+      // because there are no candidate pairs without remote candidates
+      const offerNoCandidates = offerSdp
+        .split(/\r?\n/)
+        .filter(l => !l.startsWith('a=candidate:'))
+        .join('\r\n')
+
+      await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: offerNoCandidates }))
+      const answer = await peerConnection.createAnswer()
+      await peerConnection.setLocalDescription(answer)
+      // ICE gathering starts here (host candidates ready in <200ms), but NO checking
+      // because the remote description has no candidates → no candidate pairs formed yet
+
+      console.log('[PeerConnection] Prepared deferred answer for:', peerId, `(${callerCandidates.length} caller candidates held)`)
+      return { answer, callerCandidates }
+    } catch (error) {
+      console.error('[PeerConnection] Failed to prepare deferred answer:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Activate ICE checking that was deferred by prepareAnswerDeferred().
+   * Call this after broadcasting the ANS TX and waiting for the caller to start ICE.
+   * Adds the caller's candidates to the peer connection, forming candidate pairs
+   * and triggering ICE connectivity checks.
+   *
+   * @param {string} peerId - Caller address
+   * @param {Array} callerCandidates - [{candidate, sdpMid, sdpMLineIndex}]
+   */
+  async activateDeferredChecking(peerId, callerCandidates) {
+    for (const c of callerCandidates) {
+      try {
+        await this.addIceCandidate(peerId, c)
+      } catch (e) {
+        console.warn('[PeerConnection] Deferred candidate rejected:', e.message)
+      }
+    }
+    console.log('[PeerConnection] Deferred ICE checking activated for:', peerId)
+  }
+
+  /**
    * Create and send answer
    *
    * @param {string} peerId - Peer identifier
@@ -534,12 +610,12 @@ class PeerConnection extends EventEmitter {
           resolve(pc.localDescription)
         }
       }
-      // 5-second timeout — LAN host candidates gather in <1s in practice
+      // 1.5-second timeout — host candidates gather in <200ms without STUN
       const timer = setTimeout(() => {
         pc.removeEventListener('icegatheringstatechange', onStateChange)
         console.warn('[PeerConnection] ICE gathering timeout for', peerId, '— using partial SDP')
         resolve(pc.localDescription)
-      }, 5000)
+      }, 1500)
       pc.addEventListener('icegatheringstatechange', onStateChange)
     })
   }
