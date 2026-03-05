@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 02:51 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 02:51 UTC';});console.log('[SVphone] Build: 2026-03-05 02:51 UTC');
+window.SVPHONE_BUILD="2026-03-05 05:28 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 05:28 UTC';});console.log('[SVphone] Build: 2026-03-05 05:28 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -19980,6 +19980,22 @@ class PeerConnection extends EventEmitter {
         const port = parseInt(parts[5])
         const localIp = parts[4]
         if (isNaN(port) || !localIp) continue
+
+        const isIpv6Host   = localIp.includes(':')
+        const isIpv6Public = publicIp.includes(':')
+
+        if (isIpv6Host) {
+          // IPv6 host candidates are already globally routable — already registered by
+          // setRemoteDescription, no srflx synthesis needed. Skip to avoid malformed
+          // mixed-version candidates (IPv4 public + IPv6 raddr).
+          continue
+        }
+
+        if (isIpv6Public) {
+          // Detected public IP is IPv6 but host candidate is IPv4 — version mismatch,
+          // skip rather than create an invalid candidate.
+          continue
+        }
 
         candidates.push({
           candidate: `candidate:pub${port} ${component} UDP 1677729535 ${publicIp} ${port} typ srflx raddr ${localIp} rport ${port}`,

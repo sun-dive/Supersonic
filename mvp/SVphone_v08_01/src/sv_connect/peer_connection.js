@@ -409,6 +409,22 @@ class PeerConnection extends EventEmitter {
         const localIp = parts[4]
         if (isNaN(port) || !localIp) continue
 
+        const isIpv6Host   = localIp.includes(':')
+        const isIpv6Public = publicIp.includes(':')
+
+        if (isIpv6Host) {
+          // IPv6 host candidates are already globally routable — already registered by
+          // setRemoteDescription, no srflx synthesis needed. Skip to avoid malformed
+          // mixed-version candidates (IPv4 public + IPv6 raddr).
+          continue
+        }
+
+        if (isIpv6Public) {
+          // Detected public IP is IPv6 but host candidate is IPv4 — version mismatch,
+          // skip rather than create an invalid candidate.
+          continue
+        }
+
         candidates.push({
           candidate: `candidate:pub${port} ${component} UDP 1677729535 ${publicIp} ${port} typ srflx raddr ${localIp} rport ${port}`,
           sdpMid: sdpMid ?? String(Math.max(0, sdpMLineIndex)),
