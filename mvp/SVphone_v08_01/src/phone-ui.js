@@ -242,10 +242,6 @@ class PhoneUI {
 
     // ── Audio tones ──────────────────────────────────────────────────
 
-    /**
-     * Shared ring cycle — dual-tone 440Hz+480Hz, 2s on / 4s off.
-     * key = 'incoming' or 'outgoing'; state stored as _<key>Playing/_<key>Timer.
-     */
     _startRing(key) {
         if (this[`_${key}Playing`]) return
         if (!this._ringtoneCtx) this._ringtoneCtx = new AudioContext()
@@ -258,18 +254,56 @@ class PhoneUI {
     _ringCycle(key) {
         if (!this[`_${key}Playing`]) return
         const ctx = this._ringtoneCtx
-        const gain = ctx.createGain()
-        gain.gain.value = 0.25
-        gain.connect(ctx.destination)
-        const now = ctx.currentTime
-        ;[440, 480].forEach(freq => {
-            const osc = ctx.createOscillator()
-            osc.frequency.value = freq
-            osc.connect(gain)
-            osc.start(now)
-            osc.stop(now + 2)
-        })
+        if (key === 'incoming') {
+            // US payphone mechanical bell: two strikes per ring cycle
+            this._bellStrike(ctx, ctx.currentTime)
+            this._bellStrike(ctx, ctx.currentTime + 0.7)
+        } else {
+            // Outgoing: standard dual-tone 440Hz+480Hz, 2s on
+            const gain = ctx.createGain()
+            gain.gain.value = 0.25
+            gain.connect(ctx.destination)
+            const now = ctx.currentTime
+            ;[440, 480].forEach(freq => {
+                const osc = ctx.createOscillator()
+                osc.frequency.value = freq
+                osc.connect(gain)
+                osc.start(now)
+                osc.stop(now + 2)
+            })
+        }
         this[`_${key}Timer`] = setTimeout(() => this._ringCycle(key), 6000)
+    }
+
+    /**
+     * Single mechanical bell strike — multiple harmonic partials with a sharp
+     * attack and exponential decay. Two slightly detuned fundamentals create
+     * the beating/vibrato of a physical bell.
+     */
+    _bellStrike(ctx, t) {
+        // [frequency, relative volume] — fundamental ~550Hz + bell harmonics
+        const partials = [
+            [550,  0.40],
+            [554,  0.30],  // slight detune for physical "beating" effect
+            [1100, 0.20],  // 2nd harmonic
+            [1654, 0.12],  // 3rd harmonic (slightly inharmonic)
+            [2750, 0.06],  // 5th — adds "clang"
+        ]
+        const master = ctx.createGain()
+        master.gain.setValueAtTime(0.7, t)
+        master.gain.exponentialRampToValueAtTime(0.001, t + 0.8)
+        master.connect(ctx.destination)
+        partials.forEach(([freq, vol]) => {
+            const osc = ctx.createOscillator()
+            const g   = ctx.createGain()
+            g.gain.value = vol
+            osc.type = 'sine'
+            osc.frequency.value = freq
+            osc.connect(g)
+            g.connect(master)
+            osc.start(t)
+            osc.stop(t + 0.85)
+        })
     }
 
     _stopRing(key) {
