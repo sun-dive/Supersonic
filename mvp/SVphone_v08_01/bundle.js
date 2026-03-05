@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 02:36 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 02:36 UTC';});console.log('[SVphone] Build: 2026-03-05 02:36 UTC');
+window.SVPHONE_BUILD="2026-03-05 02:51 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 02:51 UTC';});console.log('[SVphone] Build: 2026-03-05 02:51 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -22735,9 +22735,7 @@ class PhoneController {
 
         this.peerConnection.on('media:track-received', (data) => {
             this.ui.log(`📹 Received remote ${data.track.kind} track`, 'info')
-            if (data.track.kind === 'video') {
-                this.attachRemoteVideo(data.stream)
-            }
+            this.attachRemoteVideo(data.stream)
         })
 
         // ========== Security Events ==========

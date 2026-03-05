@@ -376,9 +376,7 @@ class PhoneController {
 
         this.peerConnection.on('media:track-received', (data) => {
             this.ui.log(`📹 Received remote ${data.track.kind} track`, 'info')
-            if (data.track.kind === 'video') {
-                this.attachRemoteVideo(data.stream)
-            }
+            this.attachRemoteVideo(data.stream)
         })
 
         // ========== Security Events ==========
