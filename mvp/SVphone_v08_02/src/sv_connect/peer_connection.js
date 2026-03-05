@@ -258,6 +258,13 @@ class PeerConnection extends EventEmitter {
         this.emit('ice:state-changed', { peerId, state })
       }
 
+      // ICE gathering state
+      peerConnection.onicegatheringstatechange = () => {
+        const s = peerConnection.iceGatheringState
+        console.log('[PeerConnection] ICE gathering state:', peerId, s)
+        this.emit('ice:gathering-changed', { peerId, state: s })
+      }
+
       // Signaling state
       peerConnection.onsignalingstatechange = () => {
         console.log('[PeerConnection] Signaling state:', peerId, peerConnection.signalingState)
@@ -410,6 +417,16 @@ class PeerConnection extends EventEmitter {
     const lines = sdp.split(/\r?\n/)
     let sdpMid = null
     let sdpMLineIndex = -1
+
+    // Log a summary of all candidate lines in the SDP so we can see what the browser gathered
+    const allCandLines = lines.filter(l => l.startsWith('a=candidate:'))
+    log(`[ICE] Remote SDP: ${allCandLines.length} candidates`)
+    for (const cl of allCandLines) {
+      const p = cl.slice('a=candidate:'.length).split(' ')
+      const ip = p[4] || '?'; const port = p[5] || '?'; const typ = p[7] || '?'
+      const label = ip.endsWith('.local') ? 'mDNS' : ip.includes(':') ? 'IPv6' : 'IPv4'
+      log(`[ICE]   ${label} ${typ} ${ip}:${port}`)
+    }
 
     for (const line of lines) {
       if (line.startsWith('m=')) {
