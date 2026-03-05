@@ -434,6 +434,7 @@ class PeerConnection extends EventEmitter {
         const mid = sdpMid ?? String(Math.max(0, sdpMLineIndex))
         const mIdx = Math.max(0, sdpMLineIndex)
 
+        console.log(`[ICE] srflx: ${localIp}:${port} → public ${publicIp}:${port}`)
         candidates.push({
           candidate: `candidate:pub${port} ${component} UDP 1677729535 ${publicIp} ${port} typ srflx raddr ${localIp} rport ${port}`,
           sdpMid: mid,
@@ -446,6 +447,7 @@ class PeerConnection extends EventEmitter {
         // creates a peer-reflexive candidate, and responds back — enabling bidirectional ICE.
         if (!isIpv6Host && publicIp4 && !publicIp6) {
           const nat64Ip = this._ipv4ToNat64(publicIp4)
+          console.log(`[ICE] nat64: ${localIp}:${port} → ${nat64Ip}:${port}`)
           candidates.push({
             candidate: `candidate:nat${port} ${component} UDP 1677000000 ${nat64Ip} ${port} typ srflx raddr ${localIp} rport ${port}`,
             sdpMid: mid,

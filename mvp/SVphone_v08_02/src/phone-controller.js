@@ -352,6 +352,7 @@ class PhoneController {
                         this.ui.log('✓ WebRTC handshake complete, ICE connecting...', 'success')
                         // Inject callee's public IP as srflx candidates (NAT traversal without STUN)
                         if (session.calleeIp4 || session.calleeIp6) {
+                            console.log(`[ICE] Callee IPs — ip4: ${session.calleeIp4 ?? 'none'}, ip6: ${session.calleeIp6 ?? 'none'}`)
                             const pubCandidates = this.peerConnection._buildPublicIpCandidates(
                                 session.sdpAnswer, session.calleeIp4 ?? null, session.calleeIp6 ?? null
                             )
