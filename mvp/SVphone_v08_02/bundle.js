@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 14:34 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 14:34 UTC';});console.log('[SVphone] Build: 2026-03-05 14:34 UTC');
+window.SVPHONE_BUILD="2026-03-05 14:46 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 14:46 UTC';});console.log('[SVphone] Build: 2026-03-05 14:46 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -21568,6 +21568,8 @@ class CallTokenManager {
 
       const answerToken = {
         senderIp: answerData.senderIp,
+        senderIp4: answerData.senderIp4 ?? null,
+        senderIp6: answerData.senderIp6 ?? null,
         senderPort: answerData.senderPort,
         sessionKey: answerData.sessionKey,
         codec: answerData.codec,

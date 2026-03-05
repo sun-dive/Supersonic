@@ -319,6 +319,8 @@ class CallTokenManager {
 
       const answerToken = {
         senderIp: answerData.senderIp,
+        senderIp4: answerData.senderIp4 ?? null,
+        senderIp6: answerData.senderIp6 ?? null,
         senderPort: answerData.senderPort,
         sessionKey: answerData.sessionKey,
         codec: answerData.codec,
