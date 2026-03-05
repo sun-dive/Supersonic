@@ -371,6 +371,14 @@ class PeerConnection extends EventEmitter {
     }
   }
 
+  /** @private Convert IPv4 string to well-known NAT64 prefix IPv6 (64:ff9b::/96) */
+  _ipv4ToNat64(ipv4) {
+    const [a, b, c, d] = ipv4.split('.').map(Number)
+    const hi = ((a << 8) | b).toString(16).padStart(4, '0')
+    const lo = ((c << 8) | d).toString(16).padStart(4, '0')
+    return `64:ff9b::${hi}:${lo}`
+  }
+
   /**
    * Build server-reflexive ICE candidates by pairing a known public IP with
    * the host candidate ports found in a remote SDP.
@@ -423,11 +431,27 @@ class PeerConnection extends EventEmitter {
         const publicIp = isIpv6Host ? publicIp6 : publicIp4
         if (!publicIp) continue // No public IP for this address family
 
+        const mid = sdpMid ?? String(Math.max(0, sdpMLineIndex))
+        const mIdx = Math.max(0, sdpMLineIndex)
+
         candidates.push({
           candidate: `candidate:pub${port} ${component} UDP 1677729535 ${publicIp} ${port} typ srflx raddr ${localIp} rport ${port}`,
-          sdpMid: sdpMid ?? String(Math.max(0, sdpMLineIndex)),
-          sdpMLineIndex: Math.max(0, sdpMLineIndex)
+          sdpMid: mid,
+          sdpMLineIndex: mIdx
         })
+
+        // NAT64 synthesis: if remote is IPv4-only, also inject a 64:ff9b::<ipv4> candidate.
+        // An IPv6-only local peer (e.g. mobile on LTE) can send to this address via the
+        // carrier's NAT64 gateway. The Mac then sees the packet from the NAT64 gateway IPv4,
+        // creates a peer-reflexive candidate, and responds back — enabling bidirectional ICE.
+        if (!isIpv6Host && publicIp4 && !publicIp6) {
+          const nat64Ip = this._ipv4ToNat64(publicIp4)
+          candidates.push({
+            candidate: `candidate:nat${port} ${component} UDP 1677000000 ${nat64Ip} ${port} typ srflx raddr ${localIp} rport ${port}`,
+            sdpMid: mid,
+            sdpMLineIndex: mIdx
+          })
+        }
       }
     }
 
