@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 00:49 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 00:49 UTC';});console.log('[SVphone] Build: 2026-03-05 00:49 UTC');
+window.SVPHONE_BUILD="2026-03-05 01:51 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 01:51 UTC';});console.log('[SVphone] Build: 2026-03-05 01:51 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -22013,6 +22013,7 @@ class CallHandlers {
                 return
             }
 
+            if (this.app._incomingTimeout) { clearTimeout(this.app._incomingTimeout); this.app._incomingTimeout = null }
             const callTokenId = this.app.currentCallToken
 
             // Ensure signaling has callee's IP/port — signaling.initialize() is only called
@@ -22077,6 +22078,7 @@ class CallHandlers {
                 return
             }
 
+            if (this.app._incomingTimeout) { clearTimeout(this.app._incomingTimeout); this.app._incomingTimeout = null }
             this.app.callManager.rejectCall(this.app.currentCallToken, 'user-declined')
             this.ui.resetCallUI()
             this.ui.log('Call rejected', 'info')
@@ -22839,6 +22841,13 @@ class PhoneController {
         console.debug(`[RECV] ✅ INCOMING CALL DETECTED! Caller: ${caller}`)
         this.currentCallToken = callTokenId
         this.ui.showIncomingCall(caller)
+
+        // Auto-return to standby if not answered within 3 minutes
+        this._incomingTimeout = setTimeout(() => {
+            this._incomingTimeout = null
+            this.ui.log('⏱ Incoming call timed out — returning to standby', 'info')
+            this.ui.resetCallUI()
+        }, 3 * 60 * 1000)
     }
 
     /**

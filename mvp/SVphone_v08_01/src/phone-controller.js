@@ -491,6 +491,13 @@ class PhoneController {
         console.debug(`[RECV] ✅ INCOMING CALL DETECTED! Caller: ${caller}`)
         this.currentCallToken = callTokenId
         this.ui.showIncomingCall(caller)
+
+        // Auto-return to standby if not answered within 3 minutes
+        this._incomingTimeout = setTimeout(() => {
+            this._incomingTimeout = null
+            this.ui.log('⏱ Incoming call timed out — returning to standby', 'info')
+            this.ui.resetCallUI()
+        }, 3 * 60 * 1000)
     }
 
     /**

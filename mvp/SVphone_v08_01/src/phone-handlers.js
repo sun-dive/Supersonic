@@ -151,6 +151,7 @@ class CallHandlers {
                 return
             }
 
+            if (this.app._incomingTimeout) { clearTimeout(this.app._incomingTimeout); this.app._incomingTimeout = null }
             const callTokenId = this.app.currentCallToken
 
             // Ensure signaling has callee's IP/port — signaling.initialize() is only called
@@ -215,6 +216,7 @@ class CallHandlers {
                 return
             }
 
+            if (this.app._incomingTimeout) { clearTimeout(this.app._incomingTimeout); this.app._incomingTimeout = null }
             this.app.callManager.rejectCall(this.app.currentCallToken, 'user-declined')
             this.ui.resetCallUI()
             this.ui.log('Call rejected', 'info')
