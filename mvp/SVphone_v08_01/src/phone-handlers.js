@@ -37,17 +37,19 @@ class CallHandlers {
             }
 
             this.app.saveLastCalled(calleeAddress)
-            const quality = document.getElementById('quality').value
+            const callMode = document.getElementById('callMode')?.value || 'video-hd'
+            const video    = callMode.startsWith('video')
+            const quality  = callMode.endsWith('hd') ? 'hd' : 'ld'
 
             const mintTokenFn = async (token) =>
                 this.app.callTokenManager.createAndBroadcastCallToken(token)
 
             this.ui.updateCallButtonStatus('calling')
-            this.ui.log(`📞 Calling ${calleeAddress}...`, 'info')
+            this.ui.log(`📞 Calling ${calleeAddress}... (${callMode})`, 'info')
 
             const session = await this.app.callManager.initiateCall(calleeAddress, {
                 audio: true,
-                video: true,
+                video,
                 quality,
                 mintTokenFn
             })
@@ -72,11 +74,12 @@ class CallHandlers {
                 this.ui.log('⚠️  No microphone or camera found. Attempting audio-only call...', 'warning')
                 try {
                     const calleeAddress = document.getElementById('calleeAddress').value
-                    const quality = document.getElementById('quality').value
+                    const callMode2 = document.getElementById('callMode')?.value || 'video-hd'
+                    const quality2  = callMode2.endsWith('hd') ? 'hd' : 'ld'
                     const session = await this.app.callManager.initiateCall(calleeAddress, {
                         audio: true,
                         video: false,
-                        quality,
+                        quality: quality2,
                         mintTokenFn: async (token) =>
                             this.app.callTokenManager.createAndBroadcastCallToken(token)
                     })

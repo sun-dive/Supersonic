@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 01:51 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 01:51 UTC';});console.log('[SVphone] Build: 2026-03-05 01:51 UTC');
+window.SVPHONE_BUILD="2026-03-05 02:10 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 02:10 UTC';});console.log('[SVphone] Build: 2026-03-05 02:10 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -21899,17 +21899,19 @@ class CallHandlers {
             }
 
             this.app.saveLastCalled(calleeAddress)
-            const quality = document.getElementById('quality').value
+            const callMode = document.getElementById('callMode')?.value || 'video-hd'
+            const video    = callMode.startsWith('video')
+            const quality  = callMode.endsWith('hd') ? 'hd' : 'ld'
 
             const mintTokenFn = async (token) =>
                 this.app.callTokenManager.createAndBroadcastCallToken(token)
 
             this.ui.updateCallButtonStatus('calling')
-            this.ui.log(`📞 Calling ${calleeAddress}...`, 'info')
+            this.ui.log(`📞 Calling ${calleeAddress}... (${callMode})`, 'info')
 
             const session = await this.app.callManager.initiateCall(calleeAddress, {
                 audio: true,
-                video: true,
+                video,
                 quality,
                 mintTokenFn
             })
@@ -21934,11 +21936,12 @@ class CallHandlers {
                 this.ui.log('⚠️  No microphone or camera found. Attempting audio-only call...', 'warning')
                 try {
                     const calleeAddress = document.getElementById('calleeAddress').value
-                    const quality = document.getElementById('quality').value
+                    const callMode2 = document.getElementById('callMode')?.value || 'video-hd'
+                    const quality2  = callMode2.endsWith('hd') ? 'hd' : 'ld'
                     const session = await this.app.callManager.initiateCall(calleeAddress, {
                         audio: true,
                         video: false,
-                        quality,
+                        quality: quality2,
                         mintTokenFn: async (token) =>
                             this.app.callTokenManager.createAndBroadcastCallToken(token)
                     })
