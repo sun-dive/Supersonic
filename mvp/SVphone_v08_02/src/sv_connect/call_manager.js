@@ -310,23 +310,11 @@ class CallManager extends EventEmitter {
               iceAttempt++
               iceLog(`[ICE] Attempt ${iceAttempt} (ip4: ${callToken.senderIp4 ?? 'none'} / ip6: ${callToken.senderIp6 ?? 'none'})`)
 
-              // If previous attempt left PC in "failed", recreate it so we start fresh.
-              // Reuse the same offer SDP — caller credentials are preserved so incoming
-              // STUN probes from the caller will still be validated correctly.
-              const currentPc = this.peerConnection.getPeerConnection(callToken.caller)
-              const needsReset = currentPc && currentPc.iceConnectionState === 'failed'
-              if (needsReset) {
-                iceLog('[ICE] Previous attempt failed — resetting PC and waiting for caller probes')
-                this.peerConnection.closePeerConnection(callToken.caller)
-                try {
-                  await this.peerConnection.prepareAnswerDeferred(callToken.caller, callToken.sdpOffer.sdp)
-                  // Don't add candidates yet — let caller's STUN probes arrive first
-                } catch (e) {
-                  console.warn('[CallManager] PC reset failed:', e.message)
-                }
-                iceRetryTimer = setTimeout(attemptIceConnect, ICE_RETRY_DELAY_MS)
-                return
-              }
+              // Re-add candidates regardless of ICE state — on some browsers,
+              // adding candidates after 'failed' triggers a new check round.
+              // We intentionally do NOT reset the PC here because creating a new PC
+              // would change the DTLS fingerprint, breaking the handshake with the caller
+              // who already has the original fingerprint from the ANS TX.
 
               // Add caller's native SDP candidates → ICE transitions from "new" to "checking"
               this.peerConnection.activateDeferredChecking(callToken.caller, callerCandidates)
