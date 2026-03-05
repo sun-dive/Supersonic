@@ -6,3 +6,4 @@ deployment:
     - /bin/cp mvp/SVphone_v08_02/wallet.html $HOME/svphone.com/wallet.html
     - /bin/cp mvp/SVphone_v08_02/bundle.js $HOME/svphone.com/bundle.js
     - test -f mvp/SVphone_v08_02/ring.mp3 && /bin/cp mvp/SVphone_v08_02/ring.mp3 $HOME/svphone.com/ring.mp3 || true
+    - /bin/cp mvp/SVphone_v08_02/ip.php $HOME/svphone.com/ip.php

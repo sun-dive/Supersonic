@@ -380,12 +380,20 @@ class PeerConnection extends EventEmitter {
    * The remote peer's public IP comes from the blockchain inscription; the ports
    * come from the 'typ host' candidates in the offer/answer SDP.
    *
+   * Supports dual-stack: pass publicIp4 and/or publicIp6. Each host candidate is
+   * paired with the matching address-family public IP to produce valid srflx candidates.
+   *
    * @param {string} sdp - Remote SDP (offer or answer)
-   * @param {string} publicIp - Remote peer's public IP from inscription
+   * @param {string|null} publicIp4 - Remote peer's public IPv4 (or null)
+   * @param {string|null} publicIp6 - Remote peer's public IPv6 (or null)
    * @returns {Array<{candidate, sdpMid, sdpMLineIndex}>}
    */
-  _buildPublicIpCandidates(sdp, publicIp) {
-    if (!sdp || !publicIp) return []
+  _buildPublicIpCandidates(sdp, publicIp4, publicIp6) {
+    // Legacy single-IP call: detect type and route to correct slot
+    if (publicIp4 && !publicIp6 && publicIp4.includes(':')) {
+      publicIp6 = publicIp4; publicIp4 = null
+    }
+    if (!sdp || (!publicIp4 && !publicIp6)) return []
 
     const candidates = []
     const lines = sdp.split(/\r?\n/)
@@ -409,21 +417,11 @@ class PeerConnection extends EventEmitter {
         const localIp = parts[4]
         if (isNaN(port) || !localIp) continue
 
-        const isIpv6Host   = localIp.includes(':')
-        const isIpv6Public = publicIp.includes(':')
+        const isIpv6Host = localIp.includes(':')
 
-        if (isIpv6Host) {
-          // IPv6 host candidates are already globally routable — already registered by
-          // setRemoteDescription, no srflx synthesis needed. Skip to avoid malformed
-          // mixed-version candidates (IPv4 public + IPv6 raddr).
-          continue
-        }
-
-        if (isIpv6Public) {
-          // Detected public IP is IPv6 but host candidate is IPv4 — version mismatch,
-          // skip rather than create an invalid candidate.
-          continue
-        }
+        // Pick matching public IP for this host candidate's address family
+        const publicIp = isIpv6Host ? publicIp6 : publicIp4
+        if (!publicIp) continue // No public IP for this address family
 
         candidates.push({
           candidate: `candidate:pub${port} ${component} UDP 1677729535 ${publicIp} ${port} typ srflx raddr ${localIp} rport ${port}`,
@@ -433,7 +431,8 @@ class PeerConnection extends EventEmitter {
       }
     }
 
-    console.log(`[PeerConnection] Built ${candidates.length} public-IP candidates for ${publicIp}`)
+    const label = [publicIp4, publicIp6].filter(Boolean).join(' / ')
+    console.log(`[PeerConnection] Built ${candidates.length} public-IP candidates for ${label}`)
     return candidates
   }
 

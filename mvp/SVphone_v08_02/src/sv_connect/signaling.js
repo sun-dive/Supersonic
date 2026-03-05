@@ -35,6 +35,8 @@ class CallSignaling {
     this.pollHandle = null
     this.myAddress = null
     this.myIp = null
+    this.myIp4 = null
+    this.myIp6 = null
     this.myPort = null
   }
 
@@ -46,6 +48,8 @@ class CallSignaling {
   inscriptionToCallInfo(inscription) {
     return {
       senderIp: inscription.ip,
+      senderIp4: inscription.ip4 ?? null,
+      senderIp6: inscription.ip6 ?? null,
       senderPort: inscription.port,
       sessionKey: inscription.key,
       codec: inscription.codec ?? 'opus',
@@ -84,6 +88,8 @@ class CallSignaling {
       caller: this.myAddress,
       callee: calleeAddress,
       senderIp: this.myIp,
+      senderIp4: this.myIp4,
+      senderIp6: this.myIp6,
       senderPort: this.myPort,
       sessionKey: sessionKey, // Ephemeral DH key for encryption
 
@@ -233,6 +239,8 @@ class CallSignaling {
       caller: inscription.caller,
       callee: inscription.callee,
       senderIp: callInfo.senderIp,
+      senderIp4: callInfo.senderIp4,
+      senderIp6: callInfo.senderIp6,
       senderPort: callInfo.senderPort,
       sessionKey: callInfo.sessionKey,
       codec: callInfo.codec,
@@ -249,6 +257,8 @@ class CallSignaling {
       callTokenId: callId,
       caller: inscription.caller,
       callerIp: callInfo.senderIp,
+      callerIp4: callInfo.senderIp4,
+      callerIp6: callInfo.senderIp6,
       callerPort: callInfo.senderPort,
       codec: callInfo.codec,
       quality: callInfo.quality,
@@ -273,6 +283,8 @@ class CallSignaling {
       caller: inscription.caller,
       callee: inscription.callee,
       calleeIp: callInfo.senderIp,
+      calleeIp4: callInfo.senderIp4,
+      calleeIp6: callInfo.senderIp6,
       calleePort: callInfo.senderPort,
       calleeSessionKey: callInfo.sessionKey,
       sdpAnswer: callInfo.sdpAnswer,

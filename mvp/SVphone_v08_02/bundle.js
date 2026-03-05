@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 09:55 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 09:55 UTC';});console.log('[SVphone] Build: 2026-03-05 09:55 UTC');
+window.SVPHONE_BUILD="2026-03-05 11:30 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 11:30 UTC';});console.log('[SVphone] Build: 2026-03-05 11:30 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -17400,6 +17400,8 @@ class CallSignaling {
     this.pollHandle = null
     this.myAddress = null
     this.myIp = null
+    this.myIp4 = null
+    this.myIp6 = null
     this.myPort = null
   }
 
@@ -17411,6 +17413,8 @@ class CallSignaling {
   inscriptionToCallInfo(inscription) {
     return {
       senderIp: inscription.ip,
+      senderIp4: inscription.ip4 ?? null,
+      senderIp6: inscription.ip6 ?? null,
       senderPort: inscription.port,
       sessionKey: inscription.key,
       codec: inscription.codec ?? 'opus',
@@ -17449,6 +17453,8 @@ class CallSignaling {
       caller: this.myAddress,
       callee: calleeAddress,
       senderIp: this.myIp,
+      senderIp4: this.myIp4,
+      senderIp6: this.myIp6,
       senderPort: this.myPort,
       sessionKey: sessionKey, // Ephemeral DH key for encryption
 
@@ -17598,6 +17604,8 @@ class CallSignaling {
       caller: inscription.caller,
       callee: inscription.callee,
       senderIp: callInfo.senderIp,
+      senderIp4: callInfo.senderIp4,
+      senderIp6: callInfo.senderIp6,
       senderPort: callInfo.senderPort,
       sessionKey: callInfo.sessionKey,
       codec: callInfo.codec,
@@ -17614,6 +17622,8 @@ class CallSignaling {
       callTokenId: callId,
       caller: inscription.caller,
       callerIp: callInfo.senderIp,
+      callerIp4: callInfo.senderIp4,
+      callerIp6: callInfo.senderIp6,
       callerPort: callInfo.senderPort,
       codec: callInfo.codec,
       quality: callInfo.quality,
@@ -17638,6 +17648,8 @@ class CallSignaling {
       caller: inscription.caller,
       callee: inscription.callee,
       calleeIp: callInfo.senderIp,
+      calleeIp4: callInfo.senderIp4,
+      calleeIp6: callInfo.senderIp6,
       calleePort: callInfo.senderPort,
       calleeSessionKey: callInfo.sessionKey,
       sdpAnswer: callInfo.sdpAnswer,
@@ -19095,9 +19107,9 @@ class CallManager extends EventEmitter {
 
           // Inject caller's public IP as srflx candidates so ICE can traverse NAT
           // without STUN — works on full-cone / address-restricted NAT (typical home broadband).
-          if (callToken.senderIp) {
+          if (callToken.senderIp4 || callToken.senderIp6) {
             const pubCandidates = this.peerConnection._buildPublicIpCandidates(
-              callToken.sdpOffer.sdp, callToken.senderIp
+              callToken.sdpOffer.sdp, callToken.senderIp4 ?? null, callToken.senderIp6 ?? null
             )
             for (const c of pubCandidates) {
               this.peerConnection.addIceCandidate(callToken.caller, c)
@@ -19118,6 +19130,8 @@ class CallManager extends EventEmitter {
               {
                 sdpAnswer: answerSdp,
                 senderIp: this.signaling.myIp,
+                senderIp4: this.signaling.myIp4 ?? null,
+                senderIp6: this.signaling.myIp6 ?? null,
                 senderPort: this.signaling.myPort,
                 sessionKey: answerToken.answererSessionKey,
                 codec: callToken.codec,
@@ -19806,12 +19820,20 @@ class PeerConnection extends EventEmitter {
    * The remote peer's public IP comes from the blockchain inscription; the ports
    * come from the 'typ host' candidates in the offer/answer SDP.
    *
+   * Supports dual-stack: pass publicIp4 and/or publicIp6. Each host candidate is
+   * paired with the matching address-family public IP to produce valid srflx candidates.
+   *
    * @param {string} sdp - Remote SDP (offer or answer)
-   * @param {string} publicIp - Remote peer's public IP from inscription
+   * @param {string|null} publicIp4 - Remote peer's public IPv4 (or null)
+   * @param {string|null} publicIp6 - Remote peer's public IPv6 (or null)
    * @returns {Array<{candidate, sdpMid, sdpMLineIndex}>}
    */
-  _buildPublicIpCandidates(sdp, publicIp) {
-    if (!sdp || !publicIp) return []
+  _buildPublicIpCandidates(sdp, publicIp4, publicIp6) {
+    // Legacy single-IP call: detect type and route to correct slot
+    if (publicIp4 && !publicIp6 && publicIp4.includes(':')) {
+      publicIp6 = publicIp4; publicIp4 = null
+    }
+    if (!sdp || (!publicIp4 && !publicIp6)) return []
 
     const candidates = []
     const lines = sdp.split(/\r?\n/)
@@ -19835,21 +19857,11 @@ class PeerConnection extends EventEmitter {
         const localIp = parts[4]
         if (isNaN(port) || !localIp) continue
 
-        const isIpv6Host   = localIp.includes(':')
-        const isIpv6Public = publicIp.includes(':')
+        const isIpv6Host = localIp.includes(':')
 
-        if (isIpv6Host) {
-          // IPv6 host candidates are already globally routable — already registered by
-          // setRemoteDescription, no srflx synthesis needed. Skip to avoid malformed
-          // mixed-version candidates (IPv4 public + IPv6 raddr).
-          continue
-        }
-
-        if (isIpv6Public) {
-          // Detected public IP is IPv6 but host candidate is IPv4 — version mismatch,
-          // skip rather than create an invalid candidate.
-          continue
-        }
+        // Pick matching public IP for this host candidate's address family
+        const publicIp = isIpv6Host ? publicIp6 : publicIp4
+        if (!publicIp) continue // No public IP for this address family
 
         candidates.push({
           candidate: `candidate:pub${port} ${component} UDP 1677729535 ${publicIp} ${port} typ srflx raddr ${localIp} rport ${port}`,
@@ -19859,7 +19871,8 @@ class PeerConnection extends EventEmitter {
       }
     }
 
-    console.log(`[PeerConnection] Built ${candidates.length} public-IP candidates for ${publicIp}`)
+    const label = [publicIp4, publicIp6].filter(Boolean).join(' / ')
+    console.log(`[PeerConnection] Built ${candidates.length} public-IP candidates for ${label}`)
     return candidates
   }
 
@@ -21309,6 +21322,24 @@ class CallTokenManager {
       bytes.push(calleeBuf.length)
       bytes.push(...calleeBuf)
 
+      // senderIp4 (1-byte length: 4=present, 0=absent + 0|4 bytes)
+      const ip4 = callToken.senderIp4 || null
+      if (ip4 && /^\d+\.\d+\.\d+\.\d+$/.test(ip4)) {
+        bytes.push(4)
+        bytes.push(...ip4.split('.').map(p => parseInt(p, 10)))
+      } else {
+        bytes.push(0)
+      }
+
+      // senderIp6 (1-byte length: 16=present, 0=absent + 0|16 bytes)
+      const ip6 = callToken.senderIp6 || null
+      if (ip6 && ip6.includes(':')) {
+        bytes.push(16)
+        bytes.push(...this._ipv6ToBytes(ip6))
+      } else {
+        bytes.push(0)
+      }
+
       return bytes.map(b => ('0' + b.toString(16)).slice(-2)).join('')
     } catch (error) {
       console.error('[CallToken] Failed to encode attributes:', error)
@@ -21391,7 +21422,27 @@ class CallTokenManager {
         offset += calleeLen
       }
 
-      return { senderIp, senderPort, sessionKey, codec, quality, mediaTypes, sdpOffer, caller, callee }
+      // senderIp4 (1-byte len: 4=present, 0=absent)
+      let senderIp4 = null
+      if (offset < bytes.length) {
+        const ip4Len = bytes[offset++]
+        if (ip4Len === 4) {
+          senderIp4 = `${bytes[offset]}.${bytes[offset+1]}.${bytes[offset+2]}.${bytes[offset+3]}`
+          offset += 4
+        }
+      }
+
+      // senderIp6 (1-byte len: 16=present, 0=absent)
+      let senderIp6 = null
+      if (offset < bytes.length) {
+        const ip6Len = bytes[offset++]
+        if (ip6Len === 16) {
+          senderIp6 = this._bytesToIPv6(bytes.slice(offset, offset + 16))
+          offset += 16
+        }
+      }
+
+      return { senderIp, senderPort, sessionKey, codec, quality, mediaTypes, sdpOffer, caller, callee, senderIp4, senderIp6 }
     } catch (error) {
       console.error('[CallToken] Failed to decode attributes:', error)
       return null
@@ -22675,26 +22726,50 @@ class PhoneController {
         this.assignedUdpPort = randomPort
         console.log(`[SVphone] Assigned UDP port: ${randomPort} (VoIP range 3478-3497)`)
 
-        // Auto-detect public IP — try ifconfig.me then ipify as fallback
+        // Detect both public IPv4 and IPv6 in parallel.
+        // ip4.svphone.com (A record only) forces IPv4; ip6.svphone.com (AAAA only) forces IPv6.
         myIpField.value = ''
         myIpField.placeholder = 'Detecting public IP...'
-        const services = [
-            async () => { const r = await fetch('https://ifconfig.me/ip', { signal: AbortSignal.timeout(3000) }); return (await r.text()).trim() },
-            async () => { const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(3000) }); return (await r.json()).ip },
-        ]
-        for (const fetchIp of services) {
-            try {
-                const ip = await fetchIp()
-                if (ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-                    myIpField.value = ip
-                    myIpField.placeholder = ''
-                    this.ui.log(`✓ Public IP: ${ip}`, 'success')
-                    return
-                }
-            } catch { /* try next */ }
+
+        const fetchIpv4 = async () => {
+            const urls = ['https://ip4.svphone.com/ip.php', 'https://api.ipify.org?format=json', 'https://ifconfig.me/ip']
+            for (const url of urls) {
+                try {
+                    const r = await fetch(url, { signal: AbortSignal.timeout(3000) })
+                    const ip = url.includes('ipify') ? (await r.json()).ip : (await r.text()).trim()
+                    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return ip
+                } catch { /* try next */ }
+            }
+            return null
         }
-        myIpField.placeholder = 'Enter your public IP'
-        this.ui.log('⚠️  Could not detect public IP — enter manually', 'warning')
+
+        const fetchIpv6 = async () => {
+            try {
+                const r = await fetch('https://ip6.svphone.com/ip.php', { signal: AbortSignal.timeout(3000) })
+                const ip = (await r.text()).trim()
+                if (ip.includes(':')) return ip
+            } catch { /* no IPv6 */ }
+            return null
+        }
+
+        const [ip4Res, ip6Res] = await Promise.allSettled([fetchIpv4(), fetchIpv6()])
+        const myIp4 = ip4Res.status === 'fulfilled' ? ip4Res.value : null
+        const myIp6 = ip6Res.status === 'fulfilled' ? ip6Res.value : null
+
+        this.signaling.myIp4 = myIp4
+        this.signaling.myIp6 = myIp6
+
+        const displayIp = myIp4 || myIp6 || ''
+        if (displayIp) {
+            myIpField.value = displayIp
+            myIpField.placeholder = ''
+            this.signaling.myIp = displayIp
+            const label = myIp4 && myIp6 ? ' (dual-stack)' : ''
+            this.ui.log(`✓ Public IP: ${displayIp}${label}`, 'success')
+        } else {
+            myIpField.placeholder = 'Enter your public IP'
+            this.ui.log('⚠️  Could not detect public IP — enter manually', 'warning')
+        }
     }
 
     /**
@@ -22737,9 +22812,9 @@ class PhoneController {
                     .then(() => {
                         this.ui.log('✓ WebRTC handshake complete, ICE connecting...', 'success')
                         // Inject callee's public IP as srflx candidates (NAT traversal without STUN)
-                        if (session.calleeIp) {
+                        if (session.calleeIp4 || session.calleeIp6) {
                             const pubCandidates = this.peerConnection._buildPublicIpCandidates(
-                                session.sdpAnswer, session.calleeIp
+                                session.sdpAnswer, session.calleeIp4 ?? null, session.calleeIp6 ?? null
                             )
                             for (const c of pubCandidates) {
                                 this.peerConnection.addIceCandidate(remoteAddress, c)

@@ -105,6 +105,24 @@ class CallTokenManager {
       bytes.push(calleeBuf.length)
       bytes.push(...calleeBuf)
 
+      // senderIp4 (1-byte length: 4=present, 0=absent + 0|4 bytes)
+      const ip4 = callToken.senderIp4 || null
+      if (ip4 && /^\d+\.\d+\.\d+\.\d+$/.test(ip4)) {
+        bytes.push(4)
+        bytes.push(...ip4.split('.').map(p => parseInt(p, 10)))
+      } else {
+        bytes.push(0)
+      }
+
+      // senderIp6 (1-byte length: 16=present, 0=absent + 0|16 bytes)
+      const ip6 = callToken.senderIp6 || null
+      if (ip6 && ip6.includes(':')) {
+        bytes.push(16)
+        bytes.push(...this._ipv6ToBytes(ip6))
+      } else {
+        bytes.push(0)
+      }
+
       return bytes.map(b => ('0' + b.toString(16)).slice(-2)).join('')
     } catch (error) {
       console.error('[CallToken] Failed to encode attributes:', error)
@@ -187,7 +205,27 @@ class CallTokenManager {
         offset += calleeLen
       }
 
-      return { senderIp, senderPort, sessionKey, codec, quality, mediaTypes, sdpOffer, caller, callee }
+      // senderIp4 (1-byte len: 4=present, 0=absent)
+      let senderIp4 = null
+      if (offset < bytes.length) {
+        const ip4Len = bytes[offset++]
+        if (ip4Len === 4) {
+          senderIp4 = `${bytes[offset]}.${bytes[offset+1]}.${bytes[offset+2]}.${bytes[offset+3]}`
+          offset += 4
+        }
+      }
+
+      // senderIp6 (1-byte len: 16=present, 0=absent)
+      let senderIp6 = null
+      if (offset < bytes.length) {
+        const ip6Len = bytes[offset++]
+        if (ip6Len === 16) {
+          senderIp6 = this._bytesToIPv6(bytes.slice(offset, offset + 16))
+          offset += 16
+        }
+      }
+
+      return { senderIp, senderPort, sessionKey, codec, quality, mediaTypes, sdpOffer, caller, callee, senderIp4, senderIp6 }
     } catch (error) {
       console.error('[CallToken] Failed to decode attributes:', error)
       return null

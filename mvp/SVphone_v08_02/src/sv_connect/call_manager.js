@@ -226,9 +226,9 @@ class CallManager extends EventEmitter {
 
           // Inject caller's public IP as srflx candidates so ICE can traverse NAT
           // without STUN — works on full-cone / address-restricted NAT (typical home broadband).
-          if (callToken.senderIp) {
+          if (callToken.senderIp4 || callToken.senderIp6) {
             const pubCandidates = this.peerConnection._buildPublicIpCandidates(
-              callToken.sdpOffer.sdp, callToken.senderIp
+              callToken.sdpOffer.sdp, callToken.senderIp4 ?? null, callToken.senderIp6 ?? null
             )
             for (const c of pubCandidates) {
               this.peerConnection.addIceCandidate(callToken.caller, c)
@@ -249,6 +249,8 @@ class CallManager extends EventEmitter {
               {
                 sdpAnswer: answerSdp,
                 senderIp: this.signaling.myIp,
+                senderIp4: this.signaling.myIp4 ?? null,
+                senderIp6: this.signaling.myIp6 ?? null,
                 senderPort: this.signaling.myPort,
                 sessionKey: answerToken.answererSessionKey,
                 codec: callToken.codec,

@@ -253,26 +253,50 @@ class PhoneController {
         this.assignedUdpPort = randomPort
         console.log(`[SVphone] Assigned UDP port: ${randomPort} (VoIP range 3478-3497)`)
 
-        // Auto-detect public IP — try ifconfig.me then ipify as fallback
+        // Detect both public IPv4 and IPv6 in parallel.
+        // ip4.svphone.com (A record only) forces IPv4; ip6.svphone.com (AAAA only) forces IPv6.
         myIpField.value = ''
         myIpField.placeholder = 'Detecting public IP...'
-        const services = [
-            async () => { const r = await fetch('https://ifconfig.me/ip', { signal: AbortSignal.timeout(3000) }); return (await r.text()).trim() },
-            async () => { const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(3000) }); return (await r.json()).ip },
-        ]
-        for (const fetchIp of services) {
-            try {
-                const ip = await fetchIp()
-                if (ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-                    myIpField.value = ip
-                    myIpField.placeholder = ''
-                    this.ui.log(`✓ Public IP: ${ip}`, 'success')
-                    return
-                }
-            } catch { /* try next */ }
+
+        const fetchIpv4 = async () => {
+            const urls = ['https://ip4.svphone.com/ip.php', 'https://api.ipify.org?format=json', 'https://ifconfig.me/ip']
+            for (const url of urls) {
+                try {
+                    const r = await fetch(url, { signal: AbortSignal.timeout(3000) })
+                    const ip = url.includes('ipify') ? (await r.json()).ip : (await r.text()).trim()
+                    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return ip
+                } catch { /* try next */ }
+            }
+            return null
         }
-        myIpField.placeholder = 'Enter your public IP'
-        this.ui.log('⚠️  Could not detect public IP — enter manually', 'warning')
+
+        const fetchIpv6 = async () => {
+            try {
+                const r = await fetch('https://ip6.svphone.com/ip.php', { signal: AbortSignal.timeout(3000) })
+                const ip = (await r.text()).trim()
+                if (ip.includes(':')) return ip
+            } catch { /* no IPv6 */ }
+            return null
+        }
+
+        const [ip4Res, ip6Res] = await Promise.allSettled([fetchIpv4(), fetchIpv6()])
+        const myIp4 = ip4Res.status === 'fulfilled' ? ip4Res.value : null
+        const myIp6 = ip6Res.status === 'fulfilled' ? ip6Res.value : null
+
+        this.signaling.myIp4 = myIp4
+        this.signaling.myIp6 = myIp6
+
+        const displayIp = myIp4 || myIp6 || ''
+        if (displayIp) {
+            myIpField.value = displayIp
+            myIpField.placeholder = ''
+            this.signaling.myIp = displayIp
+            const label = myIp4 && myIp6 ? ' (dual-stack)' : ''
+            this.ui.log(`✓ Public IP: ${displayIp}${label}`, 'success')
+        } else {
+            myIpField.placeholder = 'Enter your public IP'
+            this.ui.log('⚠️  Could not detect public IP — enter manually', 'warning')
+        }
     }
 
     /**
@@ -315,9 +339,9 @@ class PhoneController {
                     .then(() => {
                         this.ui.log('✓ WebRTC handshake complete, ICE connecting...', 'success')
                         // Inject callee's public IP as srflx candidates (NAT traversal without STUN)
-                        if (session.calleeIp) {
+                        if (session.calleeIp4 || session.calleeIp6) {
                             const pubCandidates = this.peerConnection._buildPublicIpCandidates(
-                                session.sdpAnswer, session.calleeIp
+                                session.sdpAnswer, session.calleeIp4 ?? null, session.calleeIp6 ?? null
                             )
                             for (const c of pubCandidates) {
                                 this.peerConnection.addIceCandidate(remoteAddress, c)
