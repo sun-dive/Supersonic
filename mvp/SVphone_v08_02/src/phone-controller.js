@@ -486,8 +486,10 @@ class PhoneController {
                                 codec: attrs.codec,
                                 quality: attrs.quality,
                                 media: attrs.mediaTypes,
+                                // CALL: wrap as object so call_manager.js can access .sdp property
+                                // ANS:  plain string — phone-controller.js:314 wraps it with {type,sdp}
                                 sdp: isCall ? { type: 'offer', sdp: attrs.sdpOffer }
-                                            : { type: 'answer', sdp: attrs.sdpOffer },
+                                            : attrs.sdpOffer,
                             }
                             break
                         }

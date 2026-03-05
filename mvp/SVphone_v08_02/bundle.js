@@ -1,4 +1,4 @@
-window.SVPHONE_BUILD="2026-03-05 09:17 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 09:17 UTC';});console.log('[SVphone] Build: 2026-03-05 09:17 UTC');
+window.SVPHONE_BUILD="2026-03-05 09:24 UTC";document.addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('svphone-build');if(el)el.textContent='build: 2026-03-05 09:24 UTC';});console.log('[SVphone] Build: 2026-03-05 09:24 UTC');
 (() => {
   var __defProp = Object.defineProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -22905,8 +22905,10 @@ class PhoneController {
                                 codec: attrs.codec,
                                 quality: attrs.quality,
                                 media: attrs.mediaTypes,
+                                // CALL: wrap as object so call_manager.js can access .sdp property
+                                // ANS:  plain string — phone-controller.js:314 wraps it with {type,sdp}
                                 sdp: isCall ? { type: 'offer', sdp: attrs.sdpOffer }
-                                            : { type: 'answer', sdp: attrs.sdpOffer },
+                                            : attrs.sdpOffer,
                             }
                             break
                         }
