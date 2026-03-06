@@ -357,13 +357,18 @@ class PeerConnection extends EventEmitter {
         peerConnection = this.createPeerConnection(peerId)
       }
 
-      // Extract candidate lines so we can add them later (triggering ICE checking)
+      // Extract candidate lines so we can add them later (triggering ICE checking).
+      // Skip port-9 "bundle-only" placeholder candidates — they discard all UDP
+      // and will always fail connectivity checks, wasting ICE attempts.
       const callerCandidates = []
       let mid = null, mIdx = -1
       for (const line of offerSdp.split(/\r?\n/)) {
         if (line.startsWith('m=')) { mIdx++; mid = null }
         else if (line.startsWith('a=mid:')) mid = line.slice(6).trim()
         else if (line.startsWith('a=candidate:')) {
+          const parts = line.split(' ')
+          const port = parseInt(parts[5])
+          if (port === 9 || port === 0) continue  // discard / bundle-only placeholder
           callerCandidates.push({ candidate: line.slice(2), sdpMid: mid, sdpMLineIndex: mIdx })
         }
       }
@@ -545,6 +550,7 @@ class PeerConnection extends EventEmitter {
         const port = parseInt(parts[5])
         const localIp = parts[4]
         if (isNaN(port) || !localIp) continue
+        if (port === 9 || port === 0) continue  // bundle-only placeholder, skip
 
         const isIpv6Host = localIp.includes(':')
 
