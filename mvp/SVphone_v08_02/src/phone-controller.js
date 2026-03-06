@@ -41,6 +41,9 @@ class PhoneController {
         // UDP port for direct P2P communication
         this.assignedUdpPort = null
 
+        // Screen Wake Lock (prevents screen sleep dropping the call)
+        this.wakeLock = null
+
         this.init()
     }
 
@@ -389,12 +392,29 @@ class PhoneController {
             console.debug('[call:connected] showCallStats() completed')
             this.callStartTime = Date.now()
             this.ui.startDurationTimer()
+            // Acquire screen wake lock to prevent screen sleep from dropping the call
+            if ('wakeLock' in navigator) {
+                navigator.wakeLock.request('screen')
+                    .then(lock => { this.wakeLock = lock; this.ui.log('Screen wake lock active', 'info') })
+                    .catch(e => console.warn('[WakeLock] Could not acquire:', e.message))
+            }
         })
 
         this.callManager.on('call:ended-session', (data) => {
             this.ui.log(`📞 Call ended. Duration: ${(data.duration/1000).toFixed(1)}s`, 'info')
             this.ui.resetCallUI()
             this.ui.stopDurationTimer()
+            // Release screen wake lock
+            if (this.wakeLock) { this.wakeLock.release(); this.wakeLock = null }
+        })
+
+        // Re-acquire wake lock if browser releases it (e.g. tab hidden then shown) during an active call
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && this.wakeLock === null && this.currentCallToken) {
+                navigator.wakeLock?.request('screen')
+                    .then(lock => { this.wakeLock = lock })
+                    .catch(() => {})
+            }
         })
 
         // ========== Quality Adaptation Events ==========
