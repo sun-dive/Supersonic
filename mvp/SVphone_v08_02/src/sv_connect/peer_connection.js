@@ -524,8 +524,12 @@ class PeerConnection extends EventEmitter {
     let sdpMid = null
     let sdpMLineIndex = -1
 
-    // Log a summary of all candidate lines in the SDP so we can see what the browser gathered
-    const allCandLines = lines.filter(l => l.startsWith('a=candidate:'))
+    // Log a summary of candidate lines in the SDP (exclude port-9 bundle-only placeholders)
+    const allCandLines = lines.filter(l => {
+      if (!l.startsWith('a=candidate:')) return false
+      const p = l.split(' '); const port = parseInt(p[5])
+      return port !== 9 && port !== 0
+    })
     log(`[ICE] Remote SDP: ${allCandLines.length} candidates`)
     for (const cl of allCandLines) {
       const p = cl.slice('a=candidate:'.length).split(' ')
